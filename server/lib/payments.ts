@@ -8,7 +8,7 @@ export async function topupViaRail(agentId: string, cents: number, idempotencyKe
   let rail = "mock";
   let ref = "mock:" + idempotencyKey;
   if (sk) {
-    if (!sk.startsWith("sk_test_")) throw new MarketError("unsafe_key", "Refusing to use a non-test Stripe key.", "Set STRIPE_SECRET_KEY to a test-mode key (sk_test_...).");
+    if (!/^(sk|rk|rkcs)_test_/.test(sk)) throw new MarketError("unsafe_key", "Refusing to use a non-test Stripe key.", "Set STRIPE_SECRET_KEY to a test-mode key (sk_test_..., rk_test_... or a claimable-sandbox rkcs_test_...).");
     const body = new URLSearchParams({
       amount: String(cents), currency: "usd", payment_method: "pm_card_visa", confirm: "true",
       "automatic_payment_methods[enabled]": "true", "automatic_payment_methods[allow_redirects]": "never",
