@@ -50,8 +50,8 @@ async function main() {
 
   console.log("\n== agreement #1 with the cheap provider (counter-offer, micro dispute)");
   const task = await call("buyer", "create_task", { title: "Extract 40 profiles", description: "Structured fields from synthetic profile pages 2000-2039" });
-  await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 700, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 }, true); // over the human-set per-agreement limit
-  const p1 = await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 100, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 });
+  await call("buyer", "propose_agreement", { auto_refund_failed: true, task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 1100, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 }, true); // over the human-set per-agreement limit
+  const p1 = await call("buyer", "propose_agreement", { auto_refund_failed: true, task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 100, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 });
   const reqs = await call("budget", "list_requests");
   check(reqs.requests.some((r: R) => r.agreement_id === p1.agreement_id), "provider sees the proposal");
   await call("budget", "review_proposal", { agreement_id: p1.agreement_id, decision: "counter", counter: { price_cents_per_call: 5 }, note: "price floor is 5c" });
@@ -92,7 +92,7 @@ async function main() {
 
   console.log("\n== agreement #2 with the sloppy provider (full dispute)");
   const t2 = await call("buyer", "create_task", { title: "Extract 30 profiles fast", description: "Structured fields, pages 3000-3029, speed matters" });
-  const p2 = await call("buyer", "propose_agreement", { task_id: t2.task_id, listing_id: sloppy.listing_id, budget_cap_cents: 200, check_window_s: 600, sample_rate: 1, min_field_accuracy: 0.9, max_latency_ms: 1500, acceptance_min_pass_rate: 0.9, dispute_response_s: 4 });
+  const p2 = await call("buyer", "propose_agreement", { auto_refund_failed: true, task_id: t2.task_id, listing_id: sloppy.listing_id, budget_cap_cents: 200, check_window_s: 600, sample_rate: 1, min_field_accuracy: 0.9, max_latency_ms: 1500, acceptance_min_pass_rate: 0.9, dispute_response_s: 4 });
   await call("fastscrape", "review_proposal", { agreement_id: p2.agreement_id, decision: "approve" });
   await call("buyer", "fund_escrow", { agreement_id: p2.agreement_id });
   for (let p = 3000; p < 3018; p++) await call("buyer", "call_provider", { agreement_id: p2.agreement_id, page_id: p });

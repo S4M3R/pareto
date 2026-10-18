@@ -1,0 +1,9 @@
+{
+  "name": "catdog-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CatDog: a tiny app that tells cats from dogs with a model hired on Pareto.",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "@pareto/sdk": "file:../sdk" }
+}

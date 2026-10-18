@@ -1,5 +1,6 @@
 import { type Agent, newKey, sha256 } from "../lib/auth.js";
 import { createTopupApproval } from "../lib/approvals.js";
+import { cardRequirement } from "../lib/payments.js";
 import { BASE_URL } from "../lib/env.js";
 import { db, must, rpc } from "../lib/db.js";
 import { MarketError } from "../lib/errors.js";
@@ -29,7 +30,9 @@ export async function topupCard(agent: { id: string; handle: string }, opts: { n
   const wallet = await walletCents(agent.id);
   const shortfall = opts.needed_cents ? Math.max(0, opts.needed_cents - wallet) : 0;
   const suggested = shortfall > 0 ? (TOPUP_PRESETS_CENTS.find((p) => p >= shortfall) ?? MAX_TOPUP_CENTS) : 1000;
+  const need = await cardRequirement(agent.id, agent.handle);
   return {
+    card_required: need.required, card: need.card, add_card_url: need.add_card_url,
     handle: agent.handle, wallet_cents: wallet, needed_cents: opts.needed_cents ?? null, suggested_cents: suggested,
     presets_cents: TOPUP_PRESETS_CENTS, max_topup_cents: MAX_TOPUP_CENTS,
     rail: (process.env.STRIPE_SECRET_KEY ? "stripe-test" : "mock") as "stripe-test" | "mock", reason: opts.reason ?? null,

@@ -1,0 +1,9 @@
+{
+  "name": "hotdog-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SeeFood: a tiny app that classifies photos with a model hired on Pareto.",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "@pareto/sdk": "file:../sdk" }
+}

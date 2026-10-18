@@ -2,6 +2,7 @@ import { useDisplayMode } from "mcp-use/react";
 import { useState } from "react";
 import type { CompareProvidersData } from "../../lib/schemas.js";
 import { BarCompare, ParetoScatter, colorMap, metricNote, metricTitle, type Metric } from "../_ui/charts.js";
+import { OwnerLine } from "../_ui/owner.js";
 import { Card, Money, Shell, SkeletonCard, ms, q2, useFollowUp } from "../_ui/kit.js";
 
 const TABS: { id: Metric; label: string }[] = [
@@ -18,8 +19,9 @@ function Chart({ d }: { d: CompareProvidersData }) {
   const { displayMode, availableDisplayModes, requestDisplayMode } = useDisplayMode();
   const follow = useFollowUp();
   const colors = colorMap(d.providers);
-  const colored = d.providers.filter((p) => colors[p.listing_id] !== "var(--pv-s0)"); // three validated colors; the rest are grey
-  const others = d.providers.length - colored.length;
+  const colored = d.providers.filter((p) => colors[p.listing_id] !== "var(--pv-s0)" && p.meets_constraints !== false); // three validated colors; the rest are grey
+  const missing = d.providers.filter((p) => p.meets_constraints === false);
+  const others = d.providers.length - colored.length - missing.length;
   const full = displayMode === "fullscreen";
   const dominated = d.providers.filter((p) => !p.on_frontier);
   const pick = d.recommendation;
@@ -28,6 +30,7 @@ function Chart({ d }: { d: CompareProvidersData }) {
 
   return (
     <Card title={table ? "Comparison table" : metric === "frontier" ? "Quality vs price" : metricTitle(metric)} subtitle={`${d.benchmark.title} · ${d.benchmark.metric}${n ? ` · n=${n}` : ""}`} seed={d.benchmark.slug} icon="scale">
+      <OwnerLine owner={d.benchmark.owner} n={d.benchmark.n_test} />
       <div className="pv-controls">
         <div className="pv-seg" role="tablist" aria-label="Comparison">
           {TABS.map((t) => (
@@ -46,16 +49,17 @@ function Chart({ d }: { d: CompareProvidersData }) {
         <div className="pv-scroll-x">
           <table className="pv-table">
             <thead>
-              <tr><th>Provider</th><th className="num">Quality</th><th className="num">Price</th><th className="num">p95</th><th>Frontier</th></tr>
+              <tr><th>Provider</th><th className="num">Quality</th><th className="num">Price</th><th className="num">p95</th><th>Frontier</th>{missing.length > 0 && <th>Constraints</th>}</tr>
             </thead>
             <tbody>
               {d.providers.map((p) => (
-                <tr key={p.listing_id}>
+                <tr key={p.listing_id} style={p.meets_constraints === false ? { opacity: 0.5 } : undefined}>
                   <td>{p.provider}</td>
                   <td className="num">{q2(p.quality)} <span className="pv-faint">({q2(p.ci95[0])}–{q2(p.ci95[1])})</span></td>
                   <td className="num"><Money cents={p.price_cents_per_call} /></td>
                   <td className="num">{ms(p.p95_ms)}</td>
                   <td>{p.on_frontier ? "yes" : `no, ${p.dominated_by}`}</td>
+                  {missing.length > 0 && <td>{p.meets_constraints === false ? "misses" : "meets"}</td>}
                 </tr>
               ))}
             </tbody>
@@ -71,6 +75,7 @@ function Chart({ d }: { d: CompareProvidersData }) {
             {others > 0 && <span><i className="pv-sw" />{others} other{others === 1 ? "" : "s"} (grey, named on the chart)</span>}
             <span><i className="pv-sw line" />Pareto frontier</span>
             {dominated.length > 0 && <span><i className="pv-sw hollow" />hollow = dominated</span>}
+            {missing.length > 0 && <span><i className="pv-sw hollow" style={{ opacity: 0.4 }} />dimmed = misses your constraints</span>}
           </div>
         </>
       ) : (

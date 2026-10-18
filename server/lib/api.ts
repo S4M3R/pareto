@@ -5,7 +5,8 @@
  *   GET  /api/openapi.json        the contract
  * Authenticate with the agent's API key: `x-api-key: agk_...` or `Authorization: Bearer agk_...`. */
 import { createBenchmark, devImage, listBenchmarks, runBenchmark } from "./benchmarks.js";
-import { type Agent, agentFromKey } from "./auth.js";
+import { type Agent, agentById, agentFromKey } from "./auth.js";
+import { verifySessionToken } from "./session.js";
 import { db } from "./db.js";
 import { BASE_URL } from "./env.js";
 import { MarketError } from "./errors.js";
@@ -19,12 +20,19 @@ type C = any; // the Hono context; its type is internal to mcp-use
 
 const STATUS: Record<string, number> = { unauthenticated: 401, unauthorized: 403, wrong_role: 403, slug_taken: 409, handle_taken: 409, unknown_listing: 404, unknown_benchmark: 404, unknown_agreement: 404 };
 
-async function agentOf(c: C): Promise<Agent> {
+/** The calling agent: `x-api-key`, `Authorization: Bearer agk_...`, or a console session token (`Authorization: Bearer <jwt>`). */
+export async function agentOf(c: C): Promise<Agent> {
   const bearer = String(c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!c.req.header("x-api-key") && bearer && !bearer.startsWith("agk_")) {
+    const id = await verifySessionToken(bearer);
+    const agent = id ? await agentById(id) : undefined;
+    if (!agent) throw new MarketError("unauthenticated", "That sign-in link is invalid or has expired.", "Ask for a new console link.");
+    return agent;
+  }
   return agentFromKey(c.req.header("x-api-key") ?? (bearer.startsWith("agk_") ? bearer : undefined));
 }
 
-async function respond(c: C, fn: () => Promise<{ status?: number; body: unknown }>) {
+export async function respond(c: C, fn: () => Promise<{ status?: number; body: unknown }>) {
   try {
     const r = await fn();
     return c.json(r.body, r.status ?? 200);
@@ -34,7 +42,7 @@ async function respond(c: C, fn: () => Promise<{ status?: number; body: unknown 
   }
 }
 
-const body = async (c: C, schema: { safeParse: (x: unknown) => { success: boolean; data?: any; error?: { issues: { path: PropertyKey[]; message: string }[] } } }) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+export const body = async (c: C, schema: { safeParse: (x: unknown) => { success: boolean; data?: any; error?: { issues: { path: PropertyKey[]; message: string }[] } } }) => { // eslint-disable-line @typescript-eslint/no-explicit-any
   const parsed = schema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     const first = parsed.error!.issues[0];

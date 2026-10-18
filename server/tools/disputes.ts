@@ -2,6 +2,7 @@ import { z } from "zod";
 import { fileFullDispute, fileMicroDispute, resolveFull, respondToDispute, sweep } from "../lib/disputes.js";
 import { MarketError } from "../lib/errors.js";
 import { usd } from "../lib/format.js";
+import { payReferral } from "../lib/referrals.js";
 import { CloseTaskOut, FileDisputeOut, GetDisputeOut, ReviewOut } from "../lib/schemas.js";
 import { type Row, agreementFor, db, handlesOf, must, rpc, walletCents } from "./common.js";
 import { type AnyServer, defineTool } from "./define.js";
@@ -76,6 +77,7 @@ export function registerDisputes(server: AnyServer) {
     const ag = await agreementFor(agent!, agreement_id);
     if (ag.buyer_id !== agent!.id) throw new MarketError("unauthorized", "Only the buyer can close.", "Use the buyer's key.");
     const r = await rpc<Row>("close_agreement", { p_agreement: agreement_id, p_actor: agent!.id });
+    await payReferral(agreement_id).catch(() => undefined); // the benchmark owner's share, if this hire cited one
     const spend = await rpc<Row>("agreement_spend", { p_agreement: agreement_id });
     const provider = (await handlesOf([ag.provider_id]))[ag.provider_id];
     return { data: { status: "settled", ...r, final: spend, wallet_cents: await walletCents(agent!.id), provider, listing_title: ag.listing?.title }, next: "review_provider to leave a review.", say: `Settled: ${usd(spend.charged_cents - spend.refunded_cents)} paid to the provider, ${usd(spend.refunded_cents)} refunded, ${usd(r.returned_unspent_cents)} returned to the wallet. The settlement card is on screen (the user can leave a review there); reply in one short sentence.` };

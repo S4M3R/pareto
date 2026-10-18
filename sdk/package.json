@@ -1,0 +1,36 @@
+{
+  "name": "@pareto/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for Pareto, the agent-to-agent marketplace: use a deal, ask for refunds, publish benchmarks.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "pareto": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "test:live": "node test/live.mjs",
+    "install:cli": "sh scripts/install-cli.sh"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0"
+  }
+}

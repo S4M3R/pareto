@@ -53,6 +53,7 @@ function Detail({ p, label }: { p: P; label: string }) {
       <div className="pv-tip-row"><span>Latency p95</span><span>{ms(p.p95_ms)}</span></div>
       <div className="pv-tip-row"><span>n</span><span>{p.n}</span></div>
       <div style={{ marginTop: 6 }}>{p.on_frontier ? "On the Pareto frontier" : `Dominated by ${p.dominated_by}${p.confidently_dominated ? "" : " (within noise)"}`}</div>
+      {p.meets_constraints === false && <div style={{ marginTop: 4 }}>Misses your constraints</div>}
     </>
   );
 }
@@ -108,18 +109,19 @@ export function ParetoScatter({ providers, metric, height, colors }: { providers
             const px = x(p.price_cents_per_call);
             const col = colors[p.listing_id];
             const on = hover === p.listing_id;
+            const out = p.meets_constraints === false; // misses the buyer's constraints: still on the chart, dimmed
             return (
-              <g key={p.listing_id}>
+              <g key={p.listing_id} opacity={out ? 0.38 : 1}>
                 <line x1={px} x2={px} y1={y(p.ci95[0])} y2={y(p.ci95[1])} stroke={col} strokeWidth={2} strokeLinecap="round" opacity={0.85} />
                 <line x1={px - 4} x2={px + 4} y1={y(p.ci95[0])} y2={y(p.ci95[0])} stroke={col} strokeWidth={2} strokeLinecap="round" opacity={0.85} />
                 <line x1={px - 4} x2={px + 4} y1={y(p.ci95[1])} y2={y(p.ci95[1])} stroke={col} strokeWidth={2} strokeLinecap="round" opacity={0.85} />
-                <circle cx={px} cy={y(p.quality)} r={on ? 8 : 6} fill={p.on_frontier ? col : "var(--pv-ring)"} stroke={p.on_frontier ? "var(--pv-ring)" : col} strokeWidth={2} />
+                <circle cx={px} cy={y(p.quality)} r={on ? 8 : 6} fill={p.on_frontier && !out ? col : "var(--pv-ring)"} stroke={p.on_frontier && !out ? "var(--pv-ring)" : col} strokeWidth={2} strokeDasharray={out ? "2 2" : undefined} />
                 {labelled.includes(p) && (
                   <text className="pv-label-direct" x={px > w - 90 ? px - 12 : px + 12} y={y(p.quality) + 4} textAnchor={px > w - 90 ? "end" : "start"}>{p.provider}</text>
                 )}
                 <circle
                   className="pv-hit" cx={px} cy={y(p.quality)} r={16} tabIndex={0}
-                  aria-label={`${p.provider}: quality ${q2(p.quality)}, ${money(p.price_cents_per_call)} per call, ${p.on_frontier ? "on the frontier" : "dominated"}`}
+                  aria-label={`${p.provider}: quality ${q2(p.quality)}, ${money(p.price_cents_per_call)} per call, ${p.on_frontier ? "on the frontier" : "dominated"}${p.meets_constraints === false ? ", misses your constraints" : ""}`}
                   onMouseEnter={() => setHover(p.listing_id)} onMouseLeave={() => setHover(null)}
                   onFocus={() => setHover(p.listing_id)} onBlur={() => setHover(null)}
                 />
@@ -155,7 +157,7 @@ export function BarCompare({ providers, metric, colors }: { providers: P[]; metr
   return (
     <div className="pv-bars" role="list" aria-label={spec.label}>
       {rows.map((p, i) => (
-        <div className="pv-bar-row" role="listitem" key={p.listing_id} data-best={i === 0} style={{ ["--sw" as string]: colors[p.listing_id] }}>
+        <div className="pv-bar-row" role="listitem" key={p.listing_id} data-best={i === 0} style={{ ["--sw" as string]: colors[p.listing_id], opacity: p.meets_constraints === false ? 0.4 : 1 }}>
           <span className="pv-bar-name"><span className="pv-sw" /><span>{p.provider}</span></span>
           <div className="pv-hbar" title={`${p.provider}: ${spec.fmt(spec.value(p))}`}>
             <div className="pv-hbar-fill" style={{ width: pct(spec.value(p)) }} />

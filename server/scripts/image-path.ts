@@ -65,9 +65,9 @@ async function main() {
   console.log("== hire a demo provider and use it");
   const dog = by["fastfrank"]; // the sloppy biller: slow outliers, over-billing, a few wrong answers
   const task = await call(BUYER, "create_task", { title: "Is it a hot dog?", description: "Classify sample photos as hotdog or not_hotdog." });
-  const agr = await call(BUYER, "propose_agreement", { task_id: task.task_id, listing_id: dog.listing_id, budget_cap_cents: 100, check_window_s: Number(process.env.CHECK_WINDOW_S ?? 30), sample_rate: 1, min_field_accuracy: 1, holdback_pct: 20 });
+  const agr = await call(BUYER, "propose_agreement", { auto_refund_failed: true, task_id: task.task_id, listing_id: dog.listing_id, budget_cap_cents: 100, check_window_s: Number(process.env.CHECK_WINDOW_S ?? 30), sample_rate: 1, min_field_accuracy: 1, holdback_pct: 20 });
   ok(agr.terms.capability === "image-classification", "the agreement records its capability");
-  await call(demoKey("fastfrank"), "review_proposal", { agreement_id: agr.agreement_id, decision: "approve" });
+  await call(demoKey("fastfrank"), "review_proposal", { agreement_id: agr.agreement_id, decision: "approve" }).catch(() => undefined); // the demo auto-approver may have answered first
   await call(BUYER, "fund_escrow", { agreement_id: agr.agreement_id });
   const samples = await call(BUYER, "list_sample_images", { limit: 30 });
   ok(samples.images.length === 30 && !("label" in samples.images[0]), "sample images are offered without their labels");

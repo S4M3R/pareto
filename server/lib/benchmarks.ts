@@ -44,7 +44,7 @@ export async function createBenchmark(agent: Agent, spec: BenchmarkInput, opts: 
   if (!/^[a-z0-9][a-z0-9-]{2,60}$/.test(spec.slug)) throw new MarketError("bad_input", "slug: lowercase letters, numbers and dashes, 3 to 61 characters.", "e.g. hotdog-or-not-v1");
   if (spec.category !== "image-classification") throw new MarketError("unsupported_capability", `Benchmarks for '${spec.category}' cannot be created here yet.`, "Supported: image-classification.");
   const labels = [...new Set(spec.labels.map((l) => l.trim()).filter(Boolean))];
-  if (labels.length < 2 || labels.length > 10) throw new MarketError("bad_input", "Give between 2 and 10 distinct labels.", "e.g. [\"hotdog\", \"not_hotdog\"]");
+  if (labels.length < 2 || labels.length > 25) throw new MarketError("bad_input", "Give between 2 and 25 distinct labels.", "e.g. [\"hotdog\", \"not_hotdog\"]");
   if (spec.examples.length < 24 || spec.examples.length > 400) throw new MarketError("bad_input", "Provide 24 to 400 labelled examples.", "A hidden test set needs enough images for the score to mean something.");
   const bad = spec.examples.find((e) => !labels.includes(e.label) || (!!e.image_url === !!e.image_base64));
   if (bad) throw new MarketError("bad_input", `Every example needs a label from your list and exactly one of image_url or image_base64 (problem near label '${bad.label}').`, "Fix the examples and retry.");
@@ -82,11 +82,14 @@ export async function createBenchmark(agent: Agent, spec: BenchmarkInput, opts: 
 }
 
 /** Score a listing on a benchmark: the platform sends every hidden test image to the listing's endpoint and compares the
- * answers with the reference labels. Only the listing's owner can start a run. A run records a verified result that find_providers ranks on. */
+ * answers with the reference labels. Only the listing's provider or the benchmark's author can start a run. A run records a verified result that find_providers ranks on. */
 export async function runBenchmark(agent: Agent, a: { listing_id: string; benchmark_id: string }, onProgress?: (done: number, total: number) => Promise<unknown> | void) {
   const listing = await must<Row>(db.from("listings").select("*").eq("id", a.listing_id).maybeSingle(), "listing");
-  if (listing.provider_id !== agent.id) throw new MarketError("unauthorized", "Only the listing's provider can run a benchmark for it.", "Use the provider account that owns the listing.");
-  const bench = await must<Row>(db.from("benchmarks").select("id,slug,title,category,n_test").eq("id", a.benchmark_id).maybeSingle(), "benchmark");
+  const bench = await must<Row>(db.from("benchmarks").select("id,slug,title,category,n_test,owner_id").eq("id", a.benchmark_id).maybeSingle(), "benchmark");
+  // Two parties may score a listing: its provider (on any benchmark) and the benchmark's author (any listing on their own benchmark).
+  if (listing.provider_id !== agent.id && bench.owner_id !== agent.id) {
+    throw new MarketError("unauthorized", "Only the listing's provider or the benchmark's author can run this.", "Use the provider account that owns the listing, or the account that created the benchmark.");
+  }
   if (bench.category !== listing.capability) throw new MarketError("capability_mismatch", `The listing is '${listing.capability}' but the benchmark is '${bench.category}'.`, "Pick a benchmark for the same capability (search_benchmarks).");
   assertPublicUrl(listing.endpoint_url);
   const tests = await must<Row>(db.from("benchmark_tests").select("examples").eq("benchmark_id", bench.id).maybeSingle(), "benchmark tests");
@@ -124,11 +127,26 @@ export async function runBenchmark(agent: Agent, a: { listing_id: string; benchm
   return { benchmark: bench.slug, listing: listing.title as string, accuracy: round(w.p), ci95: [round(w.low), round(w.high)], n: items.length, correct: k, errors, p50_ms: row.p50_ms, p95_ms: row.p95_ms };
 }
 
+/** Who is behind a benchmark, so a stranger's small benchmark can be weighed as one: their handle, how many deals they
+ * have settled, and how many public benchmarks they have published. */
+export async function ownerInfo(ownerId: string | null | undefined) {
+  if (!ownerId) return undefined;
+  const [{ data: a }, { data: rep }, { count }] = await Promise.all([
+    db.from("agents").select("handle,seeded").eq("id", ownerId).maybeSingle(),
+    db.from("agent_reputation").select("settled_agreements").eq("agent_id", ownerId).maybeSingle(),
+    db.from("benchmarks").select("id", { count: "exact", head: true }).eq("owner_id", ownerId).eq("visibility", "public"),
+  ]);
+  if (!a) return undefined;
+  return { handle: a.handle as string, settled_agreements: Number(rep?.settled_agreements ?? 0), benchmarks_published: count ?? 0, platform: !!a.seeded };
+}
+
 export async function listBenchmarks(category?: string) {
-  let q = db.from("benchmarks").select("id,slug,title,task,category,metric,n_test,fingerprint,version,seeded,created_at").eq("visibility", "public").order("created_at", { ascending: false }).limit(100);
+  let q = db.from("benchmarks").select("id,slug,title,task,category,metric,n_test,fingerprint,version,seeded,created_at,owner_id").eq("visibility", "public").order("created_at", { ascending: false }).limit(100);
   if (category) q = q.eq("category", category);
   const { data } = await q;
-  return (data ?? []).map((b) => ({ benchmark_id: b.id as string, slug: b.slug as string, title: b.title as string, task: b.task as string, category: b.category as string, metric: b.metric as string, n_test: b.n_test as number, fingerprint: b.fingerprint as string | null, platform_operated: Boolean(b.seeded) }));
+  const owners = new Map<string, Awaited<ReturnType<typeof ownerInfo>>>();
+  for (const id of new Set((data ?? []).map((b) => b.owner_id as string | null).filter(Boolean) as string[])) owners.set(id, await ownerInfo(id));
+  return (data ?? []).map((b) => ({ owner: owners.get(b.owner_id as string), benchmark_id: b.id as string, slug: b.slug as string, title: b.title as string, task: b.task as string, category: b.category as string, metric: b.metric as string, n_test: b.n_test as number, fingerprint: b.fingerprint as string | null, platform_operated: Boolean(b.seeded) }));
 }
 
 /** Bytes of a public dev example, for the route that serves them. Hidden test images are never returned. */

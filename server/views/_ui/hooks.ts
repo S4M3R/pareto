@@ -4,6 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Called<T> = { structuredContent?: T };
 type Caller<T> = { callTool: (args: unknown) => Promise<Called<T>>; isPending: boolean };
 
+/** State for a view, kept in the view. mcp-use's useViewState also saves it to the host as structured model context, and hosts
+ * that cannot take that (Claude Desktop) make every update throw, so buttons that set state looked dead. The cards fetch what
+ * they need again when they are drawn, so nothing is lost by not saving it. */
+export function usePlainState<T>(initial: T | (() => T)): [T, (next: T) => void] {
+  const [value, set] = useState<T>(initial);
+  return [value, set];
+}
+
 /** Call a server tool from a view. The names are plain strings (the tools are registered at runtime), so this
  * is the one place the typed hook is loosened. A tool error rejects with a ToolError; see errorParts(). */
 export function useToolCaller<T = Record<string, unknown>>(name: string) {

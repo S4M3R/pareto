@@ -6,7 +6,12 @@ __pycache__/
 data/
 runs/
 node_modules/
+dist/
 .next/
 
 # Local-only notes, not published
 yc/
+hotdog-app/.state.json
+catdog-app/.state.json
+
+.DS_Store

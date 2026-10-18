@@ -4,7 +4,7 @@
        node dev/host-server.mjs http://localhost:3000 4173
        http://localhost:4173/view-host.html?tool=whoami&key=<agent key>&theme=dark
      Params: server (default: same origin, proxied to the dev server), tool, args (JSON), key, theme=dark|light, tokens=claude|none, width,
-     fixture (JSON structuredContent to show instead of calling the tool) -->
+     fixture (JSON structuredContent to show instead of calling the tool), ctx=text (a host that takes text model context only, like Claude Desktop) -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -85,7 +85,7 @@ window.addEventListener("message", async (ev) => {
       reply({
         protocolVersion: m.params?.protocolVersion ?? "2026-01-26",
         hostInfo: { name: "pareto-dev-host", version: "0.0.1" },
-        hostCapabilities: { serverTools: {}, message: { text: {} }, openLinks: {}, updateModelContext: { text: {}, structuredContent: {} } },
+        hostCapabilities: { serverTools: {}, message: { text: {} }, openLinks: {}, updateModelContext: q.get("ctx") === "text" ? { text: {} } : { text: {}, structuredContent: {} } },
         hostContext: {
           theme, locale: "en-US", platform: "web", displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"],
           containerDimensions: { maxHeight: 900 },

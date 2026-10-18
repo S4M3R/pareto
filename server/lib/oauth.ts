@@ -24,7 +24,7 @@ const REFRESH_TTL_S = 30 * 24 * 3600;
 const CODE_TTL_S = 300;
 
 let warned = false;
-function secret(): Uint8Array {
+export function secret(): Uint8Array {
   let s = process.env.OAUTH_SECRET;
   if (!s || s.length < 32) {
     if (!warned) {

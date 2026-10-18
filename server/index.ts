@@ -3,6 +3,7 @@ import "./lib/env.js";
 import { AGENT_DOCS } from "./lib/docs.js";
 import { sweep } from "./lib/disputes.js";
 import { MarketError } from "./lib/errors.js";
+import { agentFromKey } from "./lib/auth.js";
 import { paretoOAuth } from "./lib/oauth.js";
 import { html as pageHtml } from "./lib/fixtures.js";
 import { expiredPage, topupPage } from "./lib/approve-page.js";
@@ -15,9 +16,15 @@ import { getCardApproval } from "./lib/approvals.js";
 import { MAX_TOPUP_CENTS, TOPUP_PRESETS_CENTS, walletCents } from "./tools/common.js";
 import { PROVIDERS, extract } from "./lib/providers.js";
 import { registerDemoListingServer } from "./demo/listing-server.js";
+import { startDemoAutoApprover } from "./demo/auto-approver.js";
 import { registerApi } from "./lib/api.js";
+import { registerDealsApi } from "./lib/api-deals.js";
+import { registerOwnerApi } from "./lib/api-owner.js";
+import { registerRefundsApi } from "./lib/api-refunds.js";
 import { registerAccount } from "./tools/account.js";
 import { registerCatalog } from "./tools/catalog.js";
+import { registerRefunds } from "./tools/refunds.js";
+import { registerEarnings } from "./tools/earnings.js";
 import { registerDeal } from "./tools/deal.js";
 import { registerDiscovery } from "./tools/discovery.js";
 import { registerDisputes } from "./tools/disputes.js";
@@ -26,9 +33,18 @@ import { registerMoney } from "./tools/money.js";
 import { registerUse } from "./tools/use.js";
 
 const server = new MCPServer({
-  name: "agora",
-  title: "Agora: agent-to-agent marketplace",
+  name: "pareto",
+  title: "Pareto: agent-to-agent marketplace",
   version: "0.1.0",
+  // What clients show next to the connector, and the browser tab on our own pages (public/brand).
+  icons: [
+    { src: "brand/icon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
+    { src: "brand/icon-512.png", mimeType: "image/png", sizes: ["512x512"] },
+    { src: "brand/icon-192.png", mimeType: "image/png", sizes: ["192x192"] },
+    { src: "brand/icon-64.png", mimeType: "image/png", sizes: ["64x64"] },
+  ],
+  favicon: "brand/icon-64.png",
+  websiteUrl: "https://github.com/S4M3R/pareto",
   // Claude connectors sign in with OAuth; agents and scripts keep using API keys. Both reach the same tools.
   oauth: paretoOAuth,
   mixedAuth: true,
@@ -46,6 +62,11 @@ registerMoney(server);
 registerCatalog(server);
 // REST API for listings and benchmarks, and the public sample images
 registerApi(server);
+registerDealsApi(server);
+registerRefundsApi(server);
+registerOwnerApi(server);
+registerRefunds(server);
+registerEarnings(server);
 // mock providers for demos: real services, simulated answers (demo/listing-server.ts)
 registerDemoListingServer(server);
 registerCards(server);
@@ -53,7 +74,7 @@ registerCards(server);
 // ───────── agent-readable docs (discoverable without a human) ─────────
 server.get("/llms.txt", (c) => c.text(AGENT_DOCS));
 server.get("/AGENTS.md", (c) => c.text(AGENT_DOCS));
-server.get("/health", (c) => c.json({ ok: true, service: "agora", at: new Date().toISOString() }));
+server.get("/health", (c) => c.json({ ok: true, service: "pareto", at: new Date().toISOString() }));
 
 // ───────── the controlled demo world: fixture pages and the three seeded provider services ─────────
 server.get("/fixtures/profile/:id", (c) => c.html(pageHtml(Number(c.req.param("id")))));
@@ -70,8 +91,10 @@ server.post("/providers/:name/extract", async (c) => {
 // ───────── the gateway over plain HTTP (the grant key path) ─────────
 server.post("/gw/:agreementId/call", async (c) => {
   try {
-    const input = (await c.req.json().catch(() => ({}))) as { page_id: number };
-    const r = await callThroughGateway(c.req.param("agreementId"), input, { grantKey: c.req.header("x-grant-key") });
+    const input = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const apiKey = c.req.header("x-api-key");
+    const buyer = apiKey ? await agentFromKey(apiKey) : undefined; // the buyer's own key is enough; a grant key still works
+    const r = await callThroughGateway(c.req.param("agreementId"), input, { grantKey: c.req.header("x-grant-key"), agentId: buyer?.id });
     return c.json(r);
   } catch (e) {
     if (e instanceof MarketError) {
@@ -111,7 +134,8 @@ server.post("/approve/topup/:token", async (c) => {
     a.adds = (a.adds ?? 0) + 1;
     return c.json({ wallet_cents: r.wallet_cents, rail: r.rail });
   } catch (e) {
-    return c.json({ error: e instanceof MarketError ? e.message : "Could not add funds." }, 400);
+    const cardUrl = e instanceof MarketError && e.code === "card_required" ? ((e.details?.approval_url as string | undefined) ?? null) : null;
+    return c.json({ error: e instanceof MarketError ? e.message : "Could not add funds.", ...(cardUrl ? { card_url: cardUrl } : {}) }, 400);
   }
 });
 
@@ -166,6 +190,14 @@ for (const act of ["default", "remove"] as const) {
 }
 
 // Release charges whose check window closed; resolve full disputes past their response deadline.
-setInterval(() => void sweep().catch(() => undefined), 3000).unref?.();
+// Never start a tick while the previous one is still waiting on the database: a slow database must not pile up requests.
+let sweeping = false;
+setInterval(() => {
+  if (sweeping) return;
+  sweeping = true;
+  const giveUp = new Promise<void>((resolve) => setTimeout(resolve, 30_000)); // a hung database call must not stop releases for good
+  void Promise.race([sweep(), giveUp]).catch(() => undefined).finally(() => { sweeping = false; });
+}, 3000).unref?.();
+startDemoAutoApprover();
 
 export default server;

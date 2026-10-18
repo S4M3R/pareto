@@ -1,6 +1,6 @@
 import type { AgreementData, SpendData, TermsData } from "../../lib/schemas.js";
 import { usePolledTool } from "./hooks.js";
-import { Bar, Card, Money, Pill, Row, Rows, StatusPill, Stepper, ago, ms, shortId, type Tone } from "./kit.js";
+import { Bar, Card, Money, Pill, Row, Rows, StatusPill, Stepper, ago, ms, shortId, span, type Tone } from "./kit.js";
 import type { ReactNode } from "react";
 
 const STEPS = ["Proposed", "Approved", "Active", "Settled"];
@@ -15,7 +15,7 @@ export function TermsRows({ terms }: { terms: TermsData }) {
       <Row label="Price per call"><Money cents={terms.price.amount_cents} /></Row>
       <Row label="Budget cap"><Money cents={terms.budget_cap_cents} /></Row>
       {terms.holdback_pct !== undefined && <Row label="Holdback until close">{terms.holdback_pct}%</Row>}
-      {terms.check_window_s !== undefined && <Row label="Dispute window per call">{terms.check_window_s}s</Row>}
+      {terms.check_window_s !== undefined && <Row label="Refund window per call">{span(terms.check_window_s)}</Row>}
       {terms.sla?.max_latency_ms !== undefined && <Row label="Latency SLA">{ms(terms.sla.max_latency_ms)}</Row>}
     </Rows>
   );

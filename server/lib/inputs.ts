@@ -15,7 +15,7 @@ export const BenchmarkInputSchema = z.object({
   title: z.string().min(3).max(100),
   task: z.string().min(20).max(1000).describe("Plain-language description of the task, the labels and where the images came from. Searchers match on this."),
   category: z.literal("image-classification"),
-  labels: z.array(z.string().min(1)).min(2).max(10).describe("The allowed answers, e.g. [\"hotdog\", \"not_hotdog\"]"),
+  labels: z.array(z.string().min(1)).min(2).max(25).describe("The allowed answers, e.g. [\"hotdog\", \"not_hotdog\"]"),
   examples: z.array(z.object({
     label: z.string(),
     image_url: z.string().url().optional().describe("Public https link straight to an image"),

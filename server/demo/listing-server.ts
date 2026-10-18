@@ -18,8 +18,11 @@ export interface Persona {
   /** What the account is described as. */
   about: string;
   /** Chance of a correct answer per image. Calibrated against the hidden test set so each persona scores at its designed
-   * accuracy there (95, 91, 88, 84, 87 and 80 percent); on any other image it is a deterministic coin weighted by this. */
+   * accuracy there (95, 91, 88, 84, 87 and 80 percent on hotdog-or-not-v1); on any other image it is a deterministic coin weighted by this. */
   accuracy: number;
+  /** Accuracy on a specific benchmark, by slug, when it should differ from `accuracy`. Calibrated the same way:
+   * each value is the parameter that makes that benchmark's hidden set score at the designed number. */
+  accuracy_by_set?: Record<string, number>;
   p50_ms: number;
   /** Share of calls that are slow outliers, and how much slower. */
   slow_pct: number;
@@ -32,26 +35,49 @@ export interface Persona {
 }
 
 export const DEMO_LISTINGS: Persona[] = [
-  { id: "frankfinder-pro", title: "FrankFinder Pro: Hot Dog Classifier", about: "Premium accuracy, takes its time", accuracy: 0.9131, p50_ms: 650, slow_pct: 0.02, slow_ms: 1500, overbill_pct: 0, price_cents: 8, sla_p95_ms: 2500 },
-  { id: "bunvision", title: "BunVision: Hot Dog Classifier", about: "Strong accuracy at a middle price", accuracy: 0.9137, p50_ms: 300, slow_pct: 0.02, slow_ms: 800, overbill_pct: 0, price_cents: 5, sla_p95_ms: 1200 },
-  { id: "dogspotter", title: "Dogspotter: Hot Dog Classifier", about: "Quick and affordable", accuracy: 0.9285, p50_ms: 110, slow_pct: 0.01, slow_ms: 400, overbill_pct: 0, price_cents: 3, sla_p95_ms: 600 },
-  { id: "wienernet", title: "WienerNet: Hot Dog Classifier", about: "Slower and no cheaper than its neighbours", accuracy: 0.8416, p50_ms: 380, slow_pct: 0.02, slow_ms: 900, overbill_pct: 0, price_cents: 3, sla_p95_ms: 1500 },
-  { id: "fastfrank", title: "FastFrank: Hot Dog Classifier", about: "Very fast and cheap; sloppy on billing and latency", accuracy: 0.8804, p50_ms: 60, slow_pct: 0.06, slow_ms: 2500, overbill_pct: 0.12, price_cents: 2, sla_p95_ms: 400 },
-  { id: "seefood-lite", title: "SeeFood Lite: Hot Dog Classifier", about: "Cheapest and fastest, least accurate", accuracy: 0.7749, p50_ms: 35, slow_pct: 0, slow_ms: 0, overbill_pct: 0, price_cents: 1, sla_p95_ms: 300 },
+  { id: "frankfinder-pro", title: "FrankFinder Pro: Image Classifier", about: "Premium accuracy, takes its time", accuracy: 0.9131, accuracy_by_set: { "snacks-food-v1": 0.869834, "street-hotdogs-v1": 0.965833, "street-hotdogs-v2": 0.922149, "hotdog-internal-v0": 0.949818, "animals-general-v1": 0.896833, "cats-vs-dogs-v1": 0.984324 }, p50_ms: 650, slow_pct: 0.02, slow_ms: 1500, overbill_pct: 0, price_cents: 8, sla_p95_ms: 2500 },
+  { id: "bunvision", title: "BunVision: Image Classifier", about: "Strong accuracy at a middle price", accuracy: 0.9137, accuracy_by_set: { "snacks-food-v1": 0.710099, "street-hotdogs-v1": 0.875752, "street-hotdogs-v2": 0.897911, "hotdog-internal-v0": 0.889818, "animals-general-v1": 0.654065, "cats-vs-dogs-v1": 0.787512 }, p50_ms: 300, slow_pct: 0.02, slow_ms: 800, overbill_pct: 0, price_cents: 5, sla_p95_ms: 1200 },
+  { id: "dogspotter", title: "Dogspotter: Image Classifier", about: "Quick and affordable", accuracy: 0.9285, accuracy_by_set: { "snacks-food-v1": 0.805374, "street-hotdogs-v1": 0.862205, "street-hotdogs-v2": 0.814385, "hotdog-internal-v0": 0.910566, "animals-general-v1": 0.788923, "cats-vs-dogs-v1": 0.929538 }, p50_ms: 110, slow_pct: 0.01, slow_ms: 400, overbill_pct: 0, price_cents: 3, sla_p95_ms: 600 },
+  { id: "wienernet", title: "WienerNet: Image Classifier", about: "Slower and no cheaper than its neighbours", accuracy: 0.8416, accuracy_by_set: { "snacks-food-v1": 0.64205, "street-hotdogs-v1": 0.620881, "street-hotdogs-v2": 0.724564, "hotdog-internal-v0": 0.710088, "animals-general-v1": 0.600905, "cats-vs-dogs-v1": 0.736878 }, p50_ms: 380, slow_pct: 0.02, slow_ms: 900, overbill_pct: 0, price_cents: 3, sla_p95_ms: 1500 },
+  { id: "fastfrank", title: "FastFrank: Image Classifier", about: "Very fast and cheap; sloppy on billing and latency", accuracy: 0.8804, accuracy_by_set: { "snacks-food-v1": 0.674116, "street-hotdogs-v1": 0.819652, "street-hotdogs-v2": 0.808431, "hotdog-internal-v0": 0.863549, "animals-general-v1": 0.693549, "cats-vs-dogs-v1": 0.913321 }, p50_ms: 60, slow_pct: 0.06, slow_ms: 2500, overbill_pct: 0.12, price_cents: 2, sla_p95_ms: 400 },
+  { id: "seefood-lite", title: "SeeFood Lite: Image Classifier", about: "Cheapest and fastest, least accurate", accuracy: 0.7749, accuracy_by_set: { "snacks-food-v1": 0.563493, "street-hotdogs-v1": 0.83377, "street-hotdogs-v2": 0.825311, "hotdog-internal-v0": 0.684825, "animals-general-v1": 0.509241, "cats-vs-dogs-v1": 0.671958 }, p50_ms: 35, slow_pct: 0, slow_ms: 0, overbill_pct: 0, price_cents: 1, sla_p95_ms: 300 },
 ];
 
-let key: Record<string, string> | undefined;
-/** sha256 of an image's bytes -> its reference label, written by scripts/seed-image-classification.ts */
-function answerKey(): Record<string, string> {
+/** A reference answer: a plain label (the hot dog set) or, for multi-class sets, the label and the set it belongs to. */
+type KeyEntry = string | { l: string; s: string };
+interface AnswerKey { entries: Record<string, KeyEntry>; sets: Record<string, string[]> }
+
+let key: AnswerKey | undefined;
+/** sha256 of an image's bytes -> its reference label. `answer-key.json` (the hot dog images, written by
+ * scripts/seed-image-classification.ts) is merged with `answer-key-food.json` (multi-class sets, written by
+ * scripts/seed-food-benchmarks.ts; its "@sets" entry lists each set's labels). */
+function answerKey(): AnswerKey {
   if (!key) {
-    const f = resolve(process.cwd(), "data", "answer-key.json");
-    if (!existsSync(f)) return {};
-    key = JSON.parse(readFileSync(f, "utf8")) as Record<string, string>;
+    const out: AnswerKey = { entries: {}, sets: {} };
+    let found = false;
+    for (const name of ["answer-key.json", "answer-key-food.json", "answer-key-pets.json"]) {
+      const f = resolve(process.cwd(), "data", name);
+      if (!existsSync(f)) continue;
+      found = true;
+      const raw = JSON.parse(readFileSync(f, "utf8")) as Record<string, KeyEntry | Record<string, string[]>>;
+      for (const [k, v] of Object.entries(raw)) {
+        if (k === "@sets") Object.assign(out.sets, v);
+        else out.entries[k] = v as KeyEntry;
+      }
+    }
+    if (!found) return out; // no data yet: try again on the next call
+    key = out;
   }
   return key;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The random stream for one persona and one image (and one benchmark, when the persona has an accuracy for it). Exported so
+ * scripts/seed-food-benchmarks.ts calibrates against exactly this stream. The first draw decides right or wrong. */
+export function imageRng(personaId: string, sha: string, set?: string) {
+  return mulberry32(parseInt(createHash("sha1").update(personaId + sha + (set ? ":" + set : "")).digest("hex").slice(0, 8), 16));
+}
 
 export function registerDemoListingServer(server: AnyServer) {
   server.get("/demo/listings", (c: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -64,20 +90,29 @@ export function registerDemoListingServer(server: AnyServer) {
     let bytes: Buffer | undefined;
     if (typeof body.image_base64 === "string" && body.image_base64.length < 2_000_000) bytes = Buffer.from(body.image_base64, "base64");
     else if (typeof body.image_url === "string") {
-      const m = /\/images\/(live-\d{3})\.jpg$/.exec(body.image_url); // demo services only fetch from the platform's own sample images
+      const m = /\/images\/((?:live|pet)-\d{3})\.jpg$/.exec(body.image_url); // demo services only fetch from the platform's own sample images
       bytes = m ? liveImageBytes(m[1]) : undefined;
     }
     if (!bytes || bytes.length < 100) return c.json({ error: "Send image_base64 (a JPEG), or an image_url of a platform sample image." }, 400);
 
     const sha = createHash("sha256").update(bytes).digest("hex");
-    const known = answerKey()[sha];
-    const truth = known ?? (parseInt(sha.slice(0, 2), 16) % 2 ? "hotdog" : "not_hotdog"); // an image the key has not seen: a stable coin flip
-    const rng = mulberry32(parseInt(createHash("sha1").update(p.id + sha).digest("hex").slice(0, 8), 16));
-    const correct = rng() < p.accuracy;
-    const label = correct ? truth : truth === "hotdog" ? "not_hotdog" : "hotdog";
+    const k = answerKey();
+    const entry = k.entries[sha];
+    const multi = typeof entry === "object" ? entry : undefined;
+    const truth = multi ? multi.l : (entry ?? (parseInt(sha.slice(0, 2), 16) % 2 ? "hotdog" : "not_hotdog")); // an image the key has not seen: a stable coin flip
+    // the benchmark runner names the benchmark it is running; live calls do not, and use the persona's default accuracy.
+    // A simulated model is free to be better at some data than others; a real one would be, too.
+    const set = c.req.header("x-benchmark") ?? multi?.s ?? "";
+    const perSet = p.accuracy_by_set?.[set];
+    const rng = imageRng(p.id, sha, perSet !== undefined ? set : undefined);
+    const correct = rng() < (perSet ?? p.accuracy);
     const delay = p.p50_ms * (0.75 + 0.5 * rng()) + (rng() < p.slow_pct ? p.slow_ms : 0);
     const billed = rng() < p.overbill_pct ? 2 : 1;
     const confidence = Math.round((correct ? 0.72 + 0.27 * rng() : 0.5 + 0.25 * rng()) * 1000) / 1000;
+    // a wrong answer is the other label in a two-label set, or a deterministic different class in a multi-class one (drawn last, so earlier draws are unchanged)
+    const others = multi ? (k.sets[multi.s] ?? []).filter((l) => l !== truth) : [];
+    const pick = rng();
+    const label = correct ? truth : others.length ? others[Math.floor(pick * others.length)] : truth === "hotdog" ? "not_hotdog" : "hotdog";
     await sleep(delay);
     return c.json({ label, confidence, units_billed: billed }, 200, { "x-demo-provider": "mock" });
   });

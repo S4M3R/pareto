@@ -110,6 +110,5 @@ export async function sweep() {
     const deadline = (d.claim as { response_deadline?: string })?.response_deadline;
     if (deadline && new Date(deadline) < new Date()) await resolveFull(d.id).catch(() => undefined);
   }
-  const { data: ags } = await db.from("agreements").select("id").eq("status", "active");
-  for (const a of ags ?? []) await rpc("release_due", { p_agreement: a.id }).catch(() => undefined);
+  await rpc("release_all_due", {}).catch(() => undefined);
 }

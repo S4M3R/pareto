@@ -158,3 +158,30 @@ hosted one.
 pnpm tsx scripts/demo-keys.ts            # print the keys
 pnpm tsx scripts/rotate-demo-keys.ts     # make the database accept exactly these keys (old keys and their OAuth sign-ins end)
 ```
+
+## Refund requests
+
+A refund is a request about ONE call, and the provider answers first. It reuses the `disputes` table (scope `micro`, `claim.mode = "provider_first"`): no schema change.
+
+| status | meaning | money |
+|---|---|---|
+| `awaiting_provider` | requested | charge held (`disputed`) |
+| `refunded` | provider approved | refunded from escrow to the buyer's wallet |
+| `rejected` | provider rejected; the buyer may appeal | charge still held |
+| `under_review` | appealed, the platform is checking (transient) | held |
+| `refunded_on_appeal` / `denied_on_appeal` | the platform re-ran the reference check on the recorded call | refunded / released to the provider |
+
+- REST: `POST /api/deals/:id/refunds`, `GET /api/refunds/:id`, `POST /api/refunds/:id/appeal`, `GET /api/provider/refunds`, `POST /api/refunds/:id/decision`. MCP: `request_refund`, `appeal_refund`, `list_refunds`, `list_refund_requests`, `decide_refund`.
+- The sweep only releases `pending` charges and `close_task` refuses while a request is open, so a held charge cannot be bypassed. Inputs without a reference answer (an image URL or an upload) cannot be verified on appeal, so the rejection stands.
+- Phone page for the provider: `GET /console/refunds` (sign in with `pnpm tsx scripts/console-link.ts <provider-handle> refunds <server-url>`). It polls every 2 seconds.
+- Test: `MCP=http://localhost:3102/mcp BASE=http://localhost:3102 pnpm tsx scripts/refund-path.ts`.
+
+## Referrals, deals API and the web console
+
+- **Referrals.** A buyer can cite the benchmark they chose with (`benchmark_id` on `propose_agreement`, stored in the agreement's terms). When the deal settles, the platform pays that benchmark's owner 5% of what was charged minus what was refunded: a ledger move from the `external` account to the owner's earnings (`kind = 'referral'`, idempotent per agreement). Nothing is paid when the owner is the buyer or the provider. See `lib/referrals.ts`.
+- **Deals API for apps.** `GET /api/deals`, `GET /api/deals/:id` and `GET /api/deals/:id/calls` (for the buyer), plus the existing gateway `POST /gw/:id/call`, which accepts the buyer's API key. The TypeScript client is in `../sdk` and a small example app in `../hotdog-app`.
+- **Web console.** `POST /api/console-link` (with `x-api-key`) returns signed-in links to `/console/benchmarks` (usage and referral earnings per benchmark; data from `GET /api/owner/benchmarks`) and `/console/refunds`. `pnpm tsx scripts/console-link.ts <handle> [benchmarks|refunds] [server-url]` prints one.
+- **Escrow always covers charges.** A call is only recorded if escrow can pay for it (`append_call` compares the charge, plus what is already owed out of escrow, with the escrow balance), so automatic refunds can never free budget that escrow no longer holds.
+- **Demo helpers.** `demo/auto-approver.ts` approves image-classification proposals sent to seeded demo providers after a couple of seconds (turn off with `DEMO_AUTO_APPROVE=0`; refunds are never auto-decided). `scripts/reset-demo.ts [handle] [--earnings]` returns an account to a clean take. `scripts/crowd-buyers.ts` runs real scripted buyers (labelled demo agents) that hire through a benchmark until its author has earned a target in referrals. `scripts/seed-food-benchmarks.ts` seeds the food, stranger and author benchmarks; `scripts/seed-pet-benchmarks.ts` seeds the general animal benchmark and the cat or dog data (see `yc/CATDOG_DEMO.md`). `scripts/reset-demo.ts --unpublish <slug>` also deletes a benchmark.
+
+- **Card required.** `agents.require_card` (set for `demo-buyer`) makes top-ups refuse with `card_required` until the account has saved a card (add_card, or the Add card step on the add-funds card, which opens Stripe's page). Without the flag a top-up with no card uses Stripe's generic test card. `reset-demo.ts` removes the saved cards of flagged accounts.

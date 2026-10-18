@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MarketError } from "../lib/errors.js";
 import { matchBenchmarks } from "../lib/search.js";
 import { round } from "../lib/stats.js";
+import { ownerInfo } from "../lib/benchmarks.js";
 import { analyze, recommend } from "../lib/pareto.js";
 import { CompareProvidersOut, FindProvidersOut, GetProviderOut, SearchBenchmarksOut } from "../lib/schemas.js";
 import { type Row, db, handlesOf, must } from "./common.js";
@@ -34,8 +35,9 @@ async function leaderboardFor(benchmarkId: string, limit = 3) {
 interface Constraints { benchmark_id: string; min_quality?: number; max_price_cents?: number; max_p95_ms?: number }
 
 /** Providers scored on a benchmark, with constraints applied, best quality first (ties broken by price). Shared by
- * find_providers and compare_providers so both rank on exactly the same verified numbers. */
-async function rankProviders(a: Constraints) {
+ * find_providers and compare_providers so both rank on exactly the same verified numbers. With keepAll, providers that
+ * miss a constraint stay in the list, marked meets_constraints=false, so a chart can show them greyed out. */
+async function rankProviders(a: Constraints, opts: { keepAll?: boolean } = {}) {
   const results = await latestResults(a.benchmark_id);
   if (results.length === 0) throw new MarketError("no_results", "No scored providers for this benchmark yet.", "Try another benchmark_id from search_benchmarks.");
   const { data: listings } = await db.from("listings").select("id,provider_id,title,capability,kind,pricing,sla,seeded,active").in("id", results.map((r) => r.listing_id));
@@ -46,16 +48,15 @@ async function rankProviders(a: Constraints) {
     const l = (listings ?? []).find((x) => x.id === r.listing_id);
     if (!l || !l.active) return [];
     const price = Number((l.pricing as Row).amount_cents);
-    if (a.min_quality !== undefined && r.quality < a.min_quality) return [];
-    if (a.max_price_cents !== undefined && price > a.max_price_cents) return [];
-    if (a.max_p95_ms !== undefined && r.p95_ms > a.max_p95_ms) return [];
+    const meets = !(a.min_quality !== undefined && r.quality < a.min_quality) && !(a.max_price_cents !== undefined && price > a.max_price_cents) && !(a.max_p95_ms !== undefined && r.p95_ms > a.max_p95_ms);
+    if (!meets && !opts.keepAll) return [];
     const p = rep[l.provider_id] ?? {};
     return [{
       listing_id: l.id, provider: handle[l.provider_id], title: l.title,
       quality: round(r.quality), ci95: [round(r.ci_low), round(r.ci_high)], n: r.n, verified: r.verified,
       price_cents_per_call: price, p50_ms: r.p50_ms, p95_ms: r.p95_ms,
       reputation: { settled_agreements: p.settled_agreements ?? 0, disputes_against: p.disputes_against ?? 0, disputes_upheld_against: p.disputes_upheld_against ?? 0, reviews: p.review_count ?? 0, avg_accuracy: p.avg_accuracy ?? null },
-      seeded: l.seeded, tied_with_previous: false,
+      seeded: l.seeded, tied_with_previous: false, meets_constraints: meets,
     }];
   }).sort((x, y) => y.quality - x.quality || x.price_cents_per_call - y.price_cents_per_call);
   rows.forEach((row, i) => { if (i > 0) row.tied_with_previous = row.ci95[1] >= rows[i - 1].ci95[0] && row.ci95[0] <= rows[i - 1].ci95[1]; });
@@ -78,13 +79,14 @@ export function registerDiscovery(server: AnyServer) {
       output: SearchBenchmarksOut,
     },
   }, async ({ task, sample_inputs }) => {
-    const { data } = await db.from("benchmarks").select("id,slug,title,task,category,metric,fingerprint,version,seeded,dev_examples,n_test").eq("visibility", "public");
-    const rows = (data ?? []) as Row[];
-    const matches = matchBenchmarks(task, sample_inputs ?? [], rows as never).slice(0, 3);
+    const { data } = await db.from("benchmarks").select("id,slug,title,task,category,metric,fingerprint,version,seeded,dev_examples,n_test,owner_id").eq("visibility", "public");
+    // equal matches are ordered by the size of the hidden test set (a bigger set says more), then by slug, so the order is stable
+    const rows = ((data ?? []) as Row[]).sort((a, b) => Number(b.n_test) - Number(a.n_test) || String(a.slug).localeCompare(String(b.slug)));
+    const matches = matchBenchmarks(task, sample_inputs ?? [], rows as never).slice(0, 5); // several benchmarks can cover one task (a platform set, a stranger's set): show them all so the choice is visible
     const good = await Promise.all(
       matches.filter((m) => m.match_confidence >= 0.2).map(async (m) => {
         const b = rows.find((r) => r.id === m.benchmark_id)!;
-        return { ...m, category: b.category, metric: b.metric, n_test: b.n_test, fingerprint: b.fingerprint ?? null, version: b.version, seeded: b.seeded, leaderboard: await leaderboardFor(m.benchmark_id) };
+        return { ...m, category: b.category, metric: b.metric, n_test: b.n_test, fingerprint: b.fingerprint ?? null, version: b.version, seeded: b.seeded, owner: await ownerInfo(b.owner_id), leaderboard: await leaderboardFor(m.benchmark_id) };
       }),
     );
     if (good.length === 0) {
@@ -124,14 +126,19 @@ export function registerDiscovery(server: AnyServer) {
     output: CompareProvidersOut,
     view: { name: "pareto-chart", description: "Quality versus price with the Pareto frontier, plus latency and value comparisons" },
   }, async (a) => {
-    const rows = await rankProviders(a);
-    const b = await must<Row>(db.from("benchmarks").select("id,slug,title,metric,n_test").eq("id", a.benchmark_id).maybeSingle(), "benchmark");
+    const rows = await rankProviders(a, { keepAll: true });
+    const b = await must<Row>(db.from("benchmarks").select("id,slug,title,metric,n_test,owner_id").eq("id", a.benchmark_id).maybeSingle(), "benchmark");
+    const benchmark = { id: b.id, slug: b.slug, title: b.title, metric: b.metric, n_test: b.n_test, owner: await ownerInfo(b.owner_id) };
     if (rows.length === 0) {
-      return { data: { benchmark: b, providers: [], recommendation: null, note: "No provider meets all constraints." }, next: "Relax one constraint: max_price_cents, max_p95_ms, or min_quality." };
+      return { data: { benchmark, providers: [], recommendation: null, note: "No provider has been scored on this benchmark yet." }, next: "Try another benchmark_id from search_benchmarks." };
     }
-    const scored = rows.map((r) => ({ id: r.listing_id, price: r.price_cents_per_call, quality: r.quality, ci_low: r.ci95[0], ci_high: r.ci95[1] }));
-    const verdicts = analyze(scored);
-    const pick = recommend(scored.filter((s) => verdicts.get(s.id)!.on_frontier), a);
+    // The chart shows every scored provider, with the frontier computed over all of them; providers that miss a constraint
+    // are greyed out. The pick comes from the providers that meet the constraints, on their own frontier.
+    const scoredOf = (rs: typeof rows) => rs.map((r) => ({ id: r.listing_id, price: r.price_cents_per_call, quality: r.quality, ci_low: r.ci95[0], ci_high: r.ci95[1] }));
+    const verdicts = analyze(scoredOf(rows));
+    const eligible = scoredOf(rows.filter((r) => r.meets_constraints));
+    const eligibleVerdicts = analyze(eligible);
+    const pick = recommend(eligible.filter((s) => eligibleVerdicts.get(s.id)!.on_frontier), a);
     const providers = rows.map((r) => {
       const v = verdicts.get(r.listing_id)!;
       const rep = r.reputation;
@@ -139,7 +146,7 @@ export function registerDiscovery(server: AnyServer) {
         listing_id: r.listing_id, provider: r.provider, title: r.title, quality: r.quality, ci95: r.ci95, n: r.n, verified: r.verified,
         price_cents_per_call: r.price_cents_per_call, p50_ms: r.p50_ms, p95_ms: r.p95_ms,
         upheld_per_settled: rep.settled_agreements > 0 ? round(rep.disputes_upheld_against / rep.settled_agreements, 2) : null,
-        settled_agreements: rep.settled_agreements, seeded: r.seeded,
+        settled_agreements: rep.settled_agreements, seeded: r.seeded, meets_constraints: r.meets_constraints,
         on_frontier: v.on_frontier, dominated_by: v.dominated_by ? rows.find((x) => x.listing_id === v.dominated_by)!.provider : null,
         confidently_dominated: v.confidently_dominated,
       };
@@ -147,9 +154,9 @@ export function registerDiscovery(server: AnyServer) {
     const hit = pick ? rows.find((r) => r.listing_id === pick.id)! : null;
     return {
       data: {
-        benchmark: b, providers,
+        benchmark, providers,
         recommendation: hit && pick ? { listing_id: hit.listing_id, provider: hit.provider, reason: pick.reason } : null,
-        note: "Frontier = no other provider is at least as good on quality and no more expensive. Dominance by point estimate can be noise: confidently_dominated also needs a clearly higher 95% interval.",
+        note: `Frontier = no other provider is at least as good on quality and no more expensive. Dominance by point estimate can be noise: confidently_dominated also needs a clearly higher 95% interval.${rows.some((r) => !r.meets_constraints) ? " Greyed-out providers miss your constraints." : ""}`,
       },
       next: hit ? `create_task, then propose_agreement with listing_id=${hit.listing_id}.` : "Pick a provider on the frontier, or pass min_quality / max_price_cents for a recommendation.",
       say: `The comparison chart is on the user's screen. ${hit && pick ? `Our pick: ${hit.provider}. ${pick.reason}` : "No constraints were given, so there is no pick; the frontier is the shortlist."} Reply in one or two short sentences and do not list the numbers the chart shows.`,

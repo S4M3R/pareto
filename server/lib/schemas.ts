@@ -68,6 +68,9 @@ export const RequestFundsOut = o({
   rail: z.enum(["stripe-test", "mock"]),
   reason: str.nullable(),
   approval_url: str.optional(),
+  card_required: z.boolean().optional(),
+  card: o({ brand: str, last4: str }).nullable().optional(),
+  add_card_url: str.nullable().optional(),
   next,
 });
 
@@ -80,11 +83,15 @@ export const LedgerOut = o({
 });
 
 // ───────── discovery ─────────
+/** Who made a benchmark: a stranger's small benchmark deserves less weight than an established author's. */
+const Owner = o({ handle: str, settled_agreements: num, benchmarks_published: num, platform: z.boolean().optional() });
+
 export const SearchBenchmarksOut = o({
   matches: z.array(o({
     benchmark_id: str, slug: str, title: str, match_confidence: num, why: str,
     category: str.optional(), metric: str.optional(), n_test: num.optional(), fingerprint: str.nullable().optional(),
     version: num.optional(), seeded: z.boolean().optional(),
+    owner: Owner.optional(),
     leaderboard: z.array(o({ provider: str, title: str, quality: num, ci95: z.array(num), n: num, price_cents_per_call: num })).optional(),
   })),
   note: str.optional(),
@@ -92,13 +99,14 @@ export const SearchBenchmarksOut = o({
 });
 
 export const CompareProvidersOut = o({
-  benchmark: o({ id: str, slug: str, title: str, metric: str, n_test: num }),
+  benchmark: o({ id: str, slug: str, title: str, metric: str, n_test: num, owner: Owner.optional() }),
   providers: z.array(o({
     listing_id: str, provider: str, title: str,
     quality: num, ci95: z.array(num), n: num, verified: z.boolean(),
     price_cents_per_call: num, p50_ms: num, p95_ms: num,
     upheld_per_settled: num.nullable(), settled_agreements: num, seeded: z.boolean(),
     on_frontier: z.boolean(), dominated_by: str.nullable(), confidently_dominated: z.boolean(),
+    meets_constraints: z.boolean().optional(),
   })),
   recommendation: o({ listing_id: str, provider: str, reason: str }).nullable(),
   note: str.optional(),
@@ -177,6 +185,20 @@ export const CallProviderOut = o({
 
 export const GetSpendOut = o({ ...Spend.shape, next });
 
+/** A benchmark author's referral income: what agents spent on hires that cited their benchmarks, and the share paid out. */
+export const GetEarningsOut = o({
+  owner: str,
+  referral_pct: num,
+  earned_total_cents: num,
+  earnings_balance_cents: num,
+  benchmarks: z.array(o({
+    benchmark_id: str, slug: str, title: str, n_test: num.optional(),
+    hires: num, agents: num, spend_cents: num, earned_cents: num,
+    recent: z.array(o({ agent: str, at: str, status: str, spend_cents: num, referral_cents: num })),
+  })),
+  next,
+});
+
 export const ListCallsOut = o({
   calls: z.array(o({
     seq: num, call_id: str, charge_id: str.optional(), charge_state: str.optional(), cents: num.optional(),
@@ -240,7 +262,24 @@ export type FundEscrowData = z.infer<typeof FundEscrowOut>;
 export type ListRequestsData = z.infer<typeof ListRequestsOut>;
 export type ReviewProposalData = z.infer<typeof ReviewProposalOut>;
 export type CallProviderData = z.infer<typeof CallProviderOut>;
+/** Refund requests waiting for the provider: the photo, what the provider's model answered, and why the buyer disagrees. */
+export const ListRefundRequestsOut = o({
+  refunds: z.array(o({
+    refund_id: str, deal_id: str, charge_id: str, status: str, amount_cents: num,
+    call_seq: num.nullable(), buyer: str.nullable(), provider: str.nullable(), image_url: str.nullable(),
+    answered: o({ label: str.nullable(), confidence: num.nullable() }),
+    claim: o({ reason: str, at: str }),
+    created_at: str,
+  })),
+  count: num,
+  next,
+});
+export const DecideRefundOut = o({ refund_id: str, status: str, amount_cents: num, next });
+
 export type SpendData = z.infer<typeof GetSpendOut>;
+export type ListRefundRequestsData = z.infer<typeof ListRefundRequestsOut>;
+export type DecideRefundData = z.infer<typeof DecideRefundOut>;
+export type EarningsData = z.infer<typeof GetEarningsOut>;
 export type ListCallsData = z.infer<typeof ListCallsOut>;
 export type FileDisputeData = z.infer<typeof FileDisputeOut>;
 export type GetDisputeData = z.infer<typeof GetDisputeOut>;

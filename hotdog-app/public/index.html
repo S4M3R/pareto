@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SeeFood</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" sizes="64x64" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="orb o1"></div><div class="orb o2"></div>
+<div class="app">
+  <header>
+    <div class="brand"><span class="logo">&#127789;</span><div><h1>SeeFood</h1><p id="sub">Is it a hot dog?</p></div></div>
+    <div class="meter" id="meter" hidden>
+      <div class="meter-top"><span class="k">Spent</span><span class="num" id="spent">$0.00</span><span class="of" id="of"></span></div>
+      <div class="bar"><i id="bar-charged"></i><i id="bar-refunded"></i></div>
+      <div class="meter-sub"><span id="meter-calls"></span><span id="meter-refunded"></span></div>
+    </div>
+  </header>
+
+  <div id="error" class="error" hidden></div>
+
+  <section class="bar-row" id="toolbar" hidden>
+    <div class="deal" id="deal"></div>
+    <div class="run">
+      <div class="progress" id="progress-wrap" hidden><i id="progress"></i></div>
+      <span class="num small" id="progress-text"></span>
+      <button class="btn primary" id="run">Run 100 images</button>
+      <button class="btn ghost" id="uninstall" title="Remove this model from the app">Remove</button>
+    </div>
+  </section>
+
+  <main id="main">
+    <div class="empty" id="empty"><div class="empty-card">
+      <h2>No classifier yet</h2>
+      <p>Hire one on Pareto. When the deal is funded, it shows up here.</p>
+      <form id="manual"><input id="manual-id" placeholder="or paste a deal id" spellcheck="false"><button class="btn primary" type="submit">Install</button></form>
+      <div class="manual-msg" id="manual-msg" role="alert" hidden></div>
+    </div></div>
+    <div class="grid" id="grid" hidden></div>
+  </main>
+
+  <div class="outcome" id="outcome" hidden></div>
+</div>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <button class="close" id="close" aria-label="Close">&times;</button>
+  <div class="shot" id="d-shot" data-v="none"><div class="verdict" id="d-verdict"></div><img id="d-img" alt=""><span class="chip" id="d-chip"></span></div>
+  <div class="d-body">
+    <div class="d-title"><span class="k">Photo</span><span class="num" id="d-id"></span></div>
+    <div id="d-content"></div>
+  </div>
+</aside>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -23,6 +23,6 @@ export function matchBenchmarks(task: string, samples: string[], rows: BenchRow[
         why: `matched task terms [${hits.slice(0, 6).join(", ")}]` + (samples.length ? `; ${Math.round(sampleScore * 100)}% of your sample vocabulary appears in its dev examples` : ""),
       };
     })
-    .filter((m) => m.match_confidence > 0)
+    .filter((m) => m.match_confidence >= 0.25) // below this a match is a shared common word, not the same task
     .sort((a, b) => b.match_confidence - a.match_confidence);
 }

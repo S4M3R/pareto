@@ -92,7 +92,7 @@ export async function callThroughGateway(agreementId: string, input: Record<stri
   });
 
   let callStatus: "pending" | "auto_refunded" = "pending";
-  if (bad.length > 0 && terms.auto_refund_failed !== false && charge > 0) {
+  if (bad.length > 0 && terms.auto_refund_failed === true && charge > 0) {
     await rpc("refund_charge", {
       p_charge: rec.charge_id, p_pct: 100,
       p_reason: `auto-refund: ${bad.map((b) => b.type).join(", ")} failed`,

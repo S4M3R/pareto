@@ -1,10 +1,30 @@
+import { createCardApproval } from "./approvals.js";
 import { defaultCard } from "./cards.js";
+import { BASE_URL } from "./env.js";
+import { db } from "./db.js";
 import { rpc } from "./db.js";
 import { MarketError } from "./errors.js";
 
 /** Funding rail for wallet top-ups. The internal ledger is the source of truth; Stripe (test mode only) is the rail.
  * Without STRIPE_SECRET_KEY the rail is a clearly labelled mock, so the whole flow still runs. */
+/** Accounts flagged require_card must have their own card on file before funds can be added. */
+export async function cardRequirement(agentId: string, handle?: string): Promise<{ required: boolean; card: { brand: string; last4: string } | null; add_card_url: string | null }> {
+  const { data: a } = await db.from("agents").select("handle,require_card").eq("id", agentId).maybeSingle();
+  const card = await defaultCard(agentId);
+  const required = Boolean(a?.require_card);
+  const missing = required && !card;
+  return {
+    required,
+    card: card ? { brand: card.brand, last4: card.last4 } : null,
+    add_card_url: missing ? `${BASE_URL}/approve/card/${createCardApproval({ agentId, handle: handle ?? a?.handle ?? "agent" })}` : null,
+  };
+}
+
 export async function topupViaRail(agentId: string, cents: number, idempotencyKey: string) {
+  const need = await cardRequirement(agentId);
+  if (need.required && !need.card) {
+    throw new MarketError("card_required", "Add a card before adding funds.", "The human adds a card on Stripe's page (test mode: 4242 4242 4242 4242, any future date and CVC); then the top-up works.", { approval_url: need.add_card_url });
+  }
   const sk = process.env.STRIPE_SECRET_KEY;
   let rail = "mock";
   let ref = "mock:" + idempotencyKey;

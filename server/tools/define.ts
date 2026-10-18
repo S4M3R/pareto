@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { type Agent, OAUTH_SCOPE, agentById, agentFromKey, keyFromCtx } from "../lib/auth.js";
 import { db } from "../lib/db.js";
 import { MarketError } from "../lib/errors.js";
+import { liveImageBytes } from "../lib/image-data.js";
 import { failFrom, ok } from "../lib/respond.js";
 
 /** The server, whatever its auth user type: tools resolve the agent themselves, from an OAuth token or an API key. */
@@ -32,7 +33,9 @@ export interface ToolCfg<S extends z.ZodObject<z.ZodRawShape>> {
   signIn?: boolean;
 }
 
-type Result = { data: Record<string, unknown>; next?: string; say?: string };
+/** `images`: platform sample photos to attach to the result as image content (a few small JPEGs), so a client that does not load
+ * remote markdown images (Codex, some chat apps) still shows the photo next to its caption. */
+type Result = { data: Record<string, unknown>; next?: string; say?: string; images?: { id: string; caption: string }[] };
 
 /** One place for what every tool shares: auth, role check, annotations, uniform errors, and session logging. */
 export function defineTool<S extends z.ZodObject<z.ZodRawShape>>(
@@ -74,7 +77,17 @@ export function defineTool<S extends z.ZodObject<z.ZodRawShape>>(
         }
         const r = await handler(args, agent, ctx);
         // A twin's card carries the data; the model only needs to know it was shown, and to keep its reply short.
-        return ok(r.data, r.next, o.twin ? "Shown to the user as a card. Reply with one short sentence and do not restate what the card shows." : r.say);
+        const res = ok(r.data, r.next, o.twin ? "Shown to the user as a card. Reply with one short sentence and do not restate what the card shows." : r.say);
+        if (!o.twin && r.images?.length) {
+          const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [...res.content];
+          for (const im of r.images.slice(0, 6)) {
+            const bytes = liveImageBytes(im.id);
+            if (!bytes) continue;
+            content.push({ type: "text", text: im.caption }, { type: "image", data: bytes.toString("base64"), mimeType: "image/jpeg" });
+          }
+          return { ...res, content };
+        }
+        return res;
       } catch (e) {
         outcome = e instanceof MarketError ? e.code : "internal_error";
         return failFrom(e);

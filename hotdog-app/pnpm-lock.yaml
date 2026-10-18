@@ -1,0 +1,24 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@pareto/sdk':
+        specifier: file:../sdk
+        version: file:../sdk
+
+packages:
+
+  '@pareto/sdk@file:../sdk':
+    resolution: {directory: ../sdk, type: directory}
+    engines: {node: '>=20'}
+    hasBin: true
+
+snapshots:
+
+  '@pareto/sdk@file:../sdk': {}

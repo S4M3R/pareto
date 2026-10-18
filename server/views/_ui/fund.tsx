@@ -1,7 +1,7 @@
-import { useModelContext, useViewState } from "mcp-use/react";
+import { useModelContext, useOpenExternal } from "mcp-use/react";
 import { useCallback, useEffect, useState } from "react";
 import type { RequestFundsData, TopupData } from "../../lib/schemas.js";
-import { useToolCaller } from "./hooks.js";
+import { usePlainState, useToolCaller } from "./hooks.js";
 import { Card, ErrorCard, GrainCircle, Money, Pill, Row, Rows, errorParts, money, shortId, useFollowUp } from "./kit.js";
 
 type Saved = { amount?: number; key: string; done?: TopupData & { added: number }; mode?: "more" };
@@ -10,13 +10,15 @@ type Saved = { amount?: number; key: string; done?: TopupData & { added: number 
  * (or approve on the web page) its own numbers are old; this asks the server again on load, when you return to the
  * window, and every few seconds while it is open. */
 function useLiveWallet() {
-  const balance = useToolCaller<{ wallet_cents: number }>("wallet_balance");
+  const balance = useToolCaller<{ wallet_cents: number; card_required?: boolean; card?: { brand: string; last4: string } | null }>("wallet_balance");
   const [live, setLive] = useState<number>();
+  const [card, setCard] = useState<{ required: boolean; card: { brand: string; last4: string } | null }>();
   const call = balance.call;
   const check = useCallback(async () => {
     try {
       const r = await call({});
       if (r && typeof r.wallet_cents === "number") setLive(r.wallet_cents);
+      if (r && typeof r.card_required === "boolean") setCard({ required: r.card_required, card: r.card ?? null });
     } catch {
       /* keep what we last knew */
     }
@@ -33,17 +35,19 @@ function useLiveWallet() {
       clearInterval(id);
     };
   }, [check]);
-  return live;
+  return { cents: live, card };
 }
 
 export function FundCard({ d }: { d: RequestFundsData }) {
-  const [saved, setSaved] = useViewState<Saved>({ key: crypto.randomUUID() });
+  const [saved, setSaved] = usePlainState<Saved>(() => ({ key: crypto.randomUUID() }));
   const topup = useToolCaller<TopupData>("topup_wallet");
   const follow = useFollowUp();
   const context = useModelContext();
   const [told, setTold] = useState(false);
   const [failure, setFailure] = useState<Error>();
-  const live = useLiveWallet();
+  const lw = useLiveWallet();
+  const live = lw.cents;
+  const openExternal = useOpenExternal();
   const wallet = live ?? d.wallet_cents;
   const amount = saved.amount ?? d.suggested_cents;
   const short = d.needed_cents != null && d.needed_cents > wallet ? d.needed_cents - wallet : 0;
@@ -51,7 +55,12 @@ export function FundCard({ d }: { d: RequestFundsData }) {
   const addedElsewhere = !saved.done && saved.mode !== "more" && live !== undefined && live > d.wallet_cents;
   const finished = saved.done ?? (addedElsewhere ? { rail: d.rail, ref: "", wallet_cents: live!, added: live! - d.wallet_cents } : undefined);
   const addMore = () => setSaved({ key: crypto.randomUUID(), mode: "more" });
-  const rail = d.rail === "stripe-test" ? "Stripe test card · Visa 4242" : "Mock rail (no Stripe key set)";
+  // a saved card pays for top-ups; some accounts must add their own before they can add funds
+  const cardNow = lw.card ? lw.card.card : (d.card ?? null);
+  const needCard = (lw.card ? lw.card.required : Boolean(d.card_required)) && !cardNow;
+  const cardName = cardNow ? `${cardNow.brand[0].toUpperCase()}${cardNow.brand.slice(1)} ····${cardNow.last4}` : null;
+  const rail = d.rail === "stripe-test" ? (cardName ? `Stripe · ${cardName}` : "Stripe test card · Visa 4242") : "Mock rail (no Stripe key set)";
+  const addCard = () => { if (d.add_card_url) void openExternal({ url: d.add_card_url }).catch(() => undefined); };
 
   if (finished) {
     const done = finished;
@@ -87,6 +96,19 @@ export function FundCard({ d }: { d: RequestFundsData }) {
             </button>
           )}
         </div>
+      </Card>
+    );
+  }
+
+  if (needCard) {
+    return (
+      <Card title="Add a card first" subtitle={`${d.handle} · funds are charged to your card`} seed={`${d.handle}-card`} palette="peri" icon="wallet" right={<Pill tone="amber">no card yet</Pill>}>
+        <div className="pv-callout">Pareto charges your card when you add funds, and holds the money in escrow only when you fund a deal. Add a card on Stripe's own page: the number never touches Pareto or your agent. Test mode: use <b>4242 4242 4242 4242</b>, any future date, any CVC.</div>
+        <div className="pv-actions">
+          <button className="pv-btn" onClick={addCard}>Add card on Stripe</button>
+        </div>
+        {d.add_card_url && <p className="pv-muted pv-mono" style={{ fontSize: 11.5, marginTop: 10, wordBreak: "break-all" }}>If nothing opens: {d.add_card_url}</p>}
+        <p className="pv-muted" style={{ fontSize: 13, marginTop: 12 }}>This card updates by itself once the card is saved.</p>
       </Card>
     );
   }

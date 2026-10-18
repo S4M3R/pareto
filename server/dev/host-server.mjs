@@ -1,6 +1,7 @@
 // Dev-only: serves view-host.html and proxies /mcp to a running `pnpm dev` server (same origin, so no CORS).
 //   node dev/host-server.mjs [target=http://localhost:3000] [port=4173]
-import { createServer, request } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +11,8 @@ const page = fileURLToPath(new URL("./view-host.html", import.meta.url));
 
 createServer(async (req, res) => {
   if (req.url?.startsWith("/mcp")) {
-    const up = request({ host: target.hostname, port: target.port, path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, (r) => {
+    const request = target.protocol === "https:" ? httpsRequest : httpRequest; // a deployed server is https
+    const up = request({ host: target.hostname, port: target.port || (target.protocol === "https:" ? 443 : 80), path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, (r) => {
       res.writeHead(r.statusCode ?? 502, r.headers);
       r.pipe(res);
     });

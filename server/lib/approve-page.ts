@@ -35,7 +35,7 @@ function draw(){$("go").textContent="Add "+usd(amt);$("delta").textContent="+ "+
 document.querySelectorAll("#presets button").forEach(b=>b.onclick=()=>{amt=+b.dataset.c;draw()});draw();
 $("go").onclick=async()=>{$("go").disabled=true;$("go").textContent="Adding…";$("err").textContent="";
  try{const r=await fetch(location.pathname,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({amount_cents:amt})});const j=await r.json();
-  if(!r.ok)throw new Error(j.error||"Could not add funds");
+  if(!r.ok){if(j.card_url){$("err").innerHTML=(j.error||"Add a card first.")+' <a href="'+j.card_url+'" target="_blank" rel="noopener" style="color:inherit;font-weight:700">Add a card</a>, then come back and try again.';$("go").disabled=false;draw();return}throw new Error(j.error||"Could not add funds")}
   $("app").innerHTML='<div class="ok"><h1>'+usd(amt)+' added</h1><p class="sub">Balance <b>'+usd(j.wallet_cents)+'</b>. Close this tab and tell your agent to continue, or add more.</p><button class="go" id="more">Add more money</button></div>';$("more").onclick=more}
  catch(e){$("err").textContent=e.message;$("go").disabled=false;draw()}};
 </script>`}

@@ -12,6 +12,8 @@ export const money = (cents: number, opts: { sign?: boolean } = {}) => {
 export const pct = (x: number, digits = 0) => `${(x * 100).toFixed(digits)}%`;
 export const q2 = (x: number) => x.toFixed(2);
 export const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`);
+/** A length of time in the largest sensible unit: 30s, 15 min, 2 h, 24 h. */
+export const span = (s: number) => (s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Number((s / 3600).toFixed(1))} h`);
 export const shortId = (id: string) => id.slice(0, 8);
 export function ago(iso: string, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));

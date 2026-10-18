@@ -1,6 +1,5 @@
-import { useViewState } from "mcp-use/react";
 import type { CloseTaskData, ReviewData } from "../../lib/schemas.js";
-import { useToolCaller } from "../_ui/hooks.js";
+import { usePlainState, useToolCaller } from "../_ui/hooks.js";
 import { Bar, Card, ErrorCard, GrainCircle, Money, Row, Rows, Shell, SkeletonCard, Stat } from "../_ui/kit.js";
 import { useState } from "react";
 
@@ -15,7 +14,7 @@ type Ratings = Record<Key, number>;
 type Saved = { open: boolean; ratings: Partial<Ratings>; done?: ReviewData };
 
 function Review({ agreementId }: { agreementId: string }) {
-  const [s, setS] = useViewState<Saved>({ open: false, ratings: {} });
+  const [s, setS] = usePlainState<Saved>({ open: false, ratings: {} });
   const send = useToolCaller<ReviewData>("review_provider");
   const [err, setErr] = useState<Error>();
   const complete = CRITERIA.every(([k]) => s.ratings[k]);

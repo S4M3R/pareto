@@ -38,7 +38,9 @@ export function registerDeal(server: AnyServer) {
       min_field_accuracy: z.number().min(0).max(1).default(0.8).describe("Accuracy a sampled call must reach: share of fields right for extraction, 1 for a correct label in classification"),
       sample_rate: z.number().min(0).max(1).default(0.3).describe("Share of live calls checked against ground truth (all are re-checked in a dispute)"),
       holdback_pct: z.number().int().min(0).max(50).default(20).describe("Percent of each payment held until close"),
-      check_window_s: z.number().int().min(1).max(3600).default(30).describe("Seconds a charge stays disputable before release"),
+      check_window_s: z.number().int().min(1).max(86400).default(86400).describe("Seconds you have, after each call, to ask for a refund or dispute it, before the charge is released to the provider. Default and maximum: 24 hours."),
+      benchmark_id: z.string().uuid().optional().describe("The benchmark you used to choose this provider. Its owner earns a referral when the deal settles; it costs you nothing."),
+      auto_refund_failed: z.boolean().default(false).describe("Off by default: a call that fails a check is recorded (and shows in its trace) but still charged, and the buyer asks for a refund themselves (request_refund) or disputes it. Set true to have failed calls refunded automatically at once."),
       acceptance_min_pass_rate: z.number().min(0.5).max(1).default(0.9).describe("Pass rate the arbiter requires in a full dispute"),
       dispute_response_s: z.number().int().min(1).max(3600).default(20).describe("Seconds the provider has to respond to a full dispute"),
     }),
@@ -48,11 +50,13 @@ export function registerDeal(server: AnyServer) {
     const task = await must<Row>(db.from("tasks").select("id,buyer_id").eq("id", a.task_id).maybeSingle(), "task");
     if (task.buyer_id !== agent!.id) throw new MarketError("unauthorized", "That task belongs to another agent.", "Create your own task with create_task.");
     if (l.provider_id === agent!.id) throw new MarketError("self_dealing", "You cannot hire your own listing.", "Pick a listing from another agent.");
+    if (a.benchmark_id) await must<Row>(db.from("benchmarks").select("id").eq("id", a.benchmark_id).eq("visibility", "public").maybeSingle(), "benchmark");
     await checkPolicy(agent!.id, a.budget_cap_cents, l.capability);
     const price = a.price_cents_per_call ?? Number(l.pricing.amount_cents);
     const maxLatency = a.max_latency_ms ?? Number(l.sla?.p95_ms ?? 3000);
     const terms = {
       capability: l.capability,
+      ...(a.benchmark_id ? { benchmark_id: a.benchmark_id } : {}),
       price: { model: "per_call", amount_cents: price },
       budget_cap_cents: a.budget_cap_cents,
       sla: { max_latency_ms: maxLatency },
@@ -61,7 +65,7 @@ export function registerDeal(server: AnyServer) {
         { type: "field_accuracy", min: a.min_field_accuracy, sample_rate: a.sample_rate },
       ],
       holdback_pct: a.holdback_pct, check_window_s: a.check_window_s, dispute_response_s: a.dispute_response_s,
-      acceptance: { min_pass_rate: a.acceptance_min_pass_rate }, auto_refund_failed: true,
+      acceptance: { min_pass_rate: a.acceptance_min_pass_rate }, auto_refund_failed: a.auto_refund_failed,
     };
     const ag = await must<Row>(db.from("agreements").insert({ task_id: a.task_id, listing_id: a.listing_id, buyer_id: agent!.id, provider_id: l.provider_id, status: "proposed", terms }).select("id").single(), "agreement");
     await event(ag.id, agent!.id, "proposed", { terms });

@@ -1,4 +1,5 @@
 import type { SearchBenchmarksData } from "../../lib/schemas.js";
+import { OwnerLine } from "../_ui/owner.js";
 import { Card, CiBar, GrainCircle, Icon, Money, Pill, Shell, SkeletonCard, Tags, pct, q2, useFollowUp } from "../_ui/kit.js";
 
 type Match = SearchBenchmarksData["matches"][number];
@@ -53,7 +54,8 @@ export default function BenchmarkCard() {
               icon="scale"
               right={<Pill tone="peri">match {pct(top.match_confidence)}</Pill>}
             >
-              <p className="pv-muted" style={{ fontSize: 13, marginBottom: 14 }}>{top.why}</p>
+              <p className="pv-muted" style={{ fontSize: 13, marginBottom: 12 }}>{top.why}</p>
+              <OwnerLine owner={top.owner} n={top.n_test} />
               <div className="pv-tags" style={{ marginBottom: 14 }}>
                 {top.n_test !== undefined && <Pill>{top.n_test} hidden tests</Pill>}
                 {top.fingerprint && <Pill>fingerprint {top.fingerprint.slice(0, 8)}</Pill>}

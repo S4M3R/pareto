@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { topupViaRail } from "../lib/payments.js";
+import { cardRequirement, topupViaRail } from "../lib/payments.js";
 import { LedgerOut, RequestFundsOut, TopupOut } from "../lib/schemas.js";
 import { MAX_TOPUP_CENTS, type Row, db, rpc, topupCard, walletCents } from "./common.js";
 import { type AnyServer, defineTool } from "./define.js";
@@ -7,7 +7,7 @@ import { type AnyServer, defineTool } from "./define.js";
 export function registerMoney(server: AnyServer) {
   defineTool(server, {
     name: "show_topup_card",
-    description: "Display only: opens the add-funds card for the human. This tool moves no money and takes no amount; the human picks an amount and clicks the button themselves (test mode, no real card). Use it when the human wants to add funds to their wallet. The result includes approval_url: if your client cannot show the card, give that link to the human to open in a browser and approve.",
+    description: "Display only: opens the add-funds card for the human. This tool moves no money and takes no amount; the human picks an amount and clicks the button themselves (test mode, no real card). Use it when the human wants to add funds to their wallet. If the account needs a card first, the card itself shows an Add card step (result: card_required, add_card_url). The result includes approval_url: if your client cannot show the card, give that link to the human to open in a browser and approve.",
     input: z.object({
       reason: z.string().max(200).optional().describe("One line shown on the card, e.g. 'to fund the extraction job'"),
     }),
@@ -45,9 +45,12 @@ export function registerMoney(server: AnyServer) {
     input: z.object({}),
     role: "buyer",
     readOnly: true,
-    output: z.object({ wallet_cents: z.number(), next: z.string().optional() }),
+    output: z.object({ wallet_cents: z.number(), card_required: z.boolean().optional(), card: z.object({ brand: z.string(), last4: z.string() }).nullable().optional(), add_card_url: z.string().nullable().optional(), next: z.string().optional() }),
     visibility: "app",
-  }, async (_a, agent) => ({ data: { wallet_cents: await walletCents(agent!.id) } }));
+  }, async (_a, agent) => {
+    const need = await cardRequirement(agent!.id, agent!.handle);
+    return { data: { wallet_cents: await walletCents(agent!.id), card_required: need.required, card: need.card, add_card_url: need.add_card_url } };
+  });
 
   defineTool(server, {
     name: "set_spending_policy",
