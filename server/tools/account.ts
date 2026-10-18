@@ -1,11 +1,13 @@
-import type { MCPServer } from "mcp-use";
 import { z } from "zod";
-import { newKey, sha256 } from "../lib/auth.js";
+import { createAgent } from "../lib/auth.js";
+import { ListingInputSchema } from "../lib/inputs.js";
+import { createListing } from "../lib/listings.js";
 import { MarketError } from "../lib/errors.js";
 import { type Row, db, must, rpc } from "./common.js";
-import { defineTool } from "./define.js";
+import { WhoamiOut } from "../lib/schemas.js";
+import { type AnyServer, defineTool } from "./define.js";
 
-export function registerAccount(server: MCPServer) {
+export function registerAccount(server: AnyServer) {
   defineTool(server, {
     name: "register_agent",
     description: "Create an agent account and receive its API key (shown once). Roles: buyer, provider, or both. owner_ref names the human principal responsible for this agent. Send the key as x-api-key on every later call.",
@@ -16,17 +18,32 @@ export function registerAccount(server: MCPServer) {
     }),
     auth: false,
   }, async (a) => {
-    const key = newKey("agk");
-    const { error } = await db.from("agents").insert({ handle: a.handle, roles: a.roles, owner_ref: a.owner_ref, description: a.description, api_key_hash: sha256(key) });
-    if (error) throw new MarketError("handle_taken", error.message.includes("duplicate") ? "That handle is taken." : error.message, "Pick another handle.");
-    return { data: { handle: a.handle, roles: a.roles, api_key: key, note: "Store this key now; it is never shown again." }, next: a.roles.includes("buyer") ? "topup_wallet, then search_benchmarks." : "register_listing." };
+    const key = await createAgent(a);
+    return { data: { handle: a.handle, roles: a.roles, api_key: key, note: "Store this key now; it is never shown again." }, next: a.roles.includes("buyer") ? "show_topup_card so your human can add funds, then search_benchmarks." : "register_listing." };
   });
+
+  defineTool(server, {
+    name: "sign_in",
+    description: "Sign in to Pareto. If you are not signed in, calling this prompts the sign-in for your human; once signed in it confirms which agent account you act as. Use it first when other tools say you are not signed in.",
+    input: z.object({}),
+    readOnly: true,
+    signIn: true,
+  }, async (_a, agent) => ({
+    data: { signed_in: true, handle: agent!.handle, roles: agent!.roles },
+    next: "whoami for your wallet and limits, then search_benchmarks.",
+  }));
 
   defineTool(server, {
     name: "whoami",
     description: "Your account: handle, roles, wallet balance, earnings, spending policy, and open agreements. A good first call to confirm your key works.",
     input: z.object({}),
     readOnly: true,
+    show: {
+      name: "show_wallet",
+      description: "Display only: shows the human a wallet card (balance, earnings, spending limits). Use it when they ask to see their wallet; for your own check use whoami.",
+      view: { name: "wallet-strip", description: "Wallet, earnings, spending policy and open agreements" },
+      output: WhoamiOut,
+    },
   }, async (_a, agent) => {
     const bal = async (kind: string) => {
       const { data } = await db.from("ledger_accounts").select("id").eq("agent_id", agent!.id).eq("kind", kind).maybeSingle();
@@ -40,18 +57,11 @@ export function registerAccount(server: MCPServer) {
 
   defineTool(server, {
     name: "register_listing",
-    description: "Provider: list a capability you offer through an HTTP endpoint. The endpoint URL is private: buyers only ever reach you through the platform gateway. Submitted listings are queued for verified benchmark runs.",
-    input: z.object({
-      title: z.string().min(3), capability: z.string().min(3).describe("e.g. profile-extraction"),
-      kind: z.enum(["agent", "mcp", "llm", "api"]), endpoint_url: z.string().url(),
-      price_cents_per_call: z.number().int().positive(), max_latency_ms: z.number().int().positive().default(3000),
-    }),
+    description: "Provider: list a capability you offer through an HTTP endpoint. The endpoint URL is private: buyers only ever reach you through the platform gateway, and it must be a public https URL. The listing is not ranked until the platform scores it: call run_benchmark next. Contract for image-classification endpoints: POST {image_base64, mime} (or {image_url}) and answer {label, confidence, units_billed: 1}.",
+    input: ListingInputSchema,
     role: "provider",
-  }, async (a, agent) => {
-    const l = await must<Row>(db.from("listings").insert({
-      provider_id: agent!.id, title: a.title, capability: a.capability, kind: a.kind, endpoint_type: "http", endpoint_url: a.endpoint_url,
-      pricing: { model: "per_call", amount_cents: a.price_cents_per_call }, sla: { p95_ms: a.max_latency_ms },
-    }).select("id").single(), "listing");
-    return { data: { listing_id: l.id, note: "Not ranked until a verified benchmark run completes." }, next: "list_requests to see proposals once buyers find you." };
-  });
+  }, async (a, agent) => ({
+    data: await createListing(agent!, a),
+    next: "list_benchmarks for this capability, then run_benchmark with the listing_id and a benchmark_id.",
+  }));
 }

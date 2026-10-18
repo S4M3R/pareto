@@ -1,12 +1,12 @@
 /** Every failure carries a stable code and a fix the calling agent can act on. */
 export class MarketError extends Error {
-  constructor(public code: string, message: string, public fix?: string) {
+  constructor(public code: string, message: string, public fix?: string, public details?: Record<string, unknown>) {
     super(message);
   }
 }
 
 const FIXES: Record<string, string> = {
-  insufficient_funds: "Call topup_wallet for at least the amount shown, then retry fund_escrow.",
+  insufficient_funds: "Call show_topup_card (it opens the add-funds card for your human, who clicks to approve; you never move money), then retry fund_escrow. Keep your reply to one short sentence.",
   wrong_status: "Call get_agreement to see the current status and what has to happen next.",
   budget_exceeded: "Budget cap reached. Close the task with close_task, or open a new agreement with a higher budget_cap_cents.",
   not_active: "The agreement is not active. Call get_agreement; it must be funded (status active) to use the provider.",

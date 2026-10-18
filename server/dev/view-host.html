@@ -1,0 +1,141 @@
+<!doctype html>
+<!-- Dev-only MCP Apps host. Runs a real tool against a running `pnpm dev` server and renders its view in an iframe,
+     speaking the same postMessage protocol Claude or the Inspector speak. Not part of the product.
+       node dev/host-server.mjs http://localhost:3000 4173
+       http://localhost:4173/view-host.html?tool=whoami&key=<agent key>&theme=dark
+     Params: server (default: same origin, proxied to the dev server), tool, args (JSON), key, theme=dark|light, tokens=claude|none, width,
+     fixture (JSON structuredContent to show instead of calling the tool) -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pareto view host</title>
+<style>
+  body { margin: 0; font: 13px ui-sans-serif, system-ui, sans-serif; background: var(--page); color: var(--ink); }
+  body[data-theme="dark"] { --page: #1f1f1e; --ink: #faf9f5; --muted: #9c9a92; --line: #3a3a38; }
+  body[data-theme="light"] { --page: #f5f4ed; --ink: #141413; --muted: #73726c; --line: #dedcd1; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); align-items: center; }
+  header input, header select, header textarea, header button { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--ink); }
+  header textarea { width: 260px; height: 28px; resize: vertical; font-family: ui-monospace, monospace; }
+  .stage { max-width: var(--w, 520px); margin: 20px auto; }
+  iframe { width: 100%; border: 0; display: block; color-scheme: normal; transition: height 0.2s; }
+  .log { max-width: 900px; margin: 0 auto 40px; padding: 0 14px; color: var(--muted); font: 11px ui-monospace, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <input id="server" size="26"><select id="tool"></select>
+  <textarea id="args" placeholder='{"arg": "value"}'></textarea>
+  <input id="key" size="20" placeholder="api key">
+  <select id="theme"><option>dark</option><option>light</option></select>
+  <select id="tokens"><option value="claude">host tokens: claude</option><option value="none">host tokens: none</option></select>
+  <button id="run">Run</button>
+</header>
+<div class="stage" id="stage"><iframe id="frame" title="view" sandbox="allow-scripts allow-same-origin" height="120"></iframe></div>
+<div class="log" id="log"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const log = (...a) => { $("log").textContent += a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ") + "\n"; };
+$("server").value = q.get("server") ?? `${location.origin}/mcp`;
+$("key").value = q.get("key") ?? ""; // an agent API key (pnpm tsx scripts/demo-keys.ts prints the demo ones)
+$("theme").value = q.get("theme") ?? "dark";
+$("tokens").value = q.get("tokens") ?? "claude";
+$("args").value = q.get("args") ?? "{}";
+if (q.get("width")) document.documentElement.style.setProperty("--w", q.get("width") + "px");
+
+// Claude's documented host tokens (dark and light), so views are tested against the real thing.
+const TOKENS = {
+  dark: { "--color-text-primary": "#FAF9F5", "--color-text-secondary": "#C2C0B6", "--color-text-tertiary": "#9C9A92", "--color-text-inverse": "#141413", "--color-background-primary": "#30302E", "--font-sans": "ui-sans-serif, system-ui, sans-serif", "--font-mono": "ui-monospace, monospace" },
+  light: { "--color-text-primary": "#141413", "--color-text-secondary": "#3D3D3A", "--color-text-tertiary": "#73726C", "--color-text-inverse": "#FFFFFF", "--color-background-primary": "#FFFFFF", "--font-sans": "ui-sans-serif, system-ui, sans-serif", "--font-mono": "ui-monospace, monospace" },
+};
+
+async function rpc(method, params) {
+  const r = await fetch($("server").value, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "x-api-key": $("key").value },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Math.floor(Math.random() * 1e9), method, params }),
+  });
+  const text = await r.text();
+  const line = text.split("\n").find((l) => l.startsWith("data:"));
+  const body = JSON.parse(line ? line.slice(5) : text);
+  if (body.error) throw new Error(body.error.message);
+  return body.result;
+}
+
+async function loadTools() {
+  const { tools } = await rpc("tools/list", {});
+  const withView = tools.filter((t) => t._meta?.ui?.resourceUri);
+  $("tool").innerHTML = withView.map((t) => `<option value="${t.name}" data-uri="${t._meta.ui.resourceUri}">${t.name}</option>`).join("");
+  if (q.get("tool")) $("tool").value = q.get("tool");
+}
+
+let current = { input: {}, result: null };
+const frame = $("frame");
+
+window.addEventListener("message", async (ev) => {
+  if (ev.source !== frame.contentWindow) return;
+  const m = ev.data;
+  if (!m || m.jsonrpc !== "2.0") return;
+  if (q.get("debug")) log("view →", m.method ?? "(response)", m.params ?? "");
+  const reply = (result) => frame.contentWindow.postMessage({ jsonrpc: "2.0", id: m.id, result }, "*");
+  const fail = (message) => frame.contentWindow.postMessage({ jsonrpc: "2.0", id: m.id, error: { code: -32000, message } }, "*");
+  switch (m.method) {
+    case "ui/initialize": {
+      const theme = $("theme").value;
+      reply({
+        protocolVersion: m.params?.protocolVersion ?? "2026-01-26",
+        hostInfo: { name: "pareto-dev-host", version: "0.0.1" },
+        hostCapabilities: { serverTools: {}, message: { text: {} }, openLinks: {}, updateModelContext: { text: {}, structuredContent: {} } },
+        hostContext: {
+          theme, locale: "en-US", platform: "web", displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"],
+          containerDimensions: { maxHeight: 900 },
+          styles: $("tokens").value === "claude" ? { variables: TOKENS[theme] } : undefined,
+        },
+      });
+      break;
+    }
+    case "ui/notifications/initialized":
+      frame.contentWindow.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: current.input } }, "*");
+      if (current.result) frame.contentWindow.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: current.result }, "*");
+      break;
+    case "tools/call":
+      log("view → tools/call", m.params.name, m.params.arguments);
+      try { reply(await rpc("tools/call", m.params)); } catch (e) { fail(String(e)); }
+      break;
+    case "ui/message": log("view → follow-up:", m.params?.content?.[0]?.text ?? m.params); reply({}); break;
+    case "ui/request-display-mode": reply({ mode: m.params?.mode ?? "inline" }); break;
+    case "ui/notifications/size-changed": if (m.params?.height) frame.style.height = Math.ceil(m.params.height) + "px"; break;
+    case "ui/update-model-context": log("view → model context:", m.params?.content?.[0]?.text ?? m.params); reply({}); break;
+    case "ui/open-link": log("view → open link", m.params); reply({}); break;
+    default: if (m.id !== undefined) reply({});
+  }
+});
+
+async function run() {
+  $("log").textContent = "";
+  document.body.dataset.theme = $("theme").value;
+  const name = $("tool").value;
+  const args = JSON.parse($("args").value || "{}");
+  const uri = $("tool").selectedOptions[0].dataset.uri;
+  // `fixture` (JSON) previews a view with a recorded result instead of running the tool, for write actions.
+  const fixture = q.get("fixture") ? JSON.parse(q.get("fixture")) : null;
+  log(fixture ? "→ fixture for" : "→ tools/call", name, args);
+  const result = fixture ? { content: [{ type: "text", text: JSON.stringify(fixture) }], structuredContent: fixture } : await rpc("tools/call", { name, arguments: args });
+  current = { input: args, result: { content: result.content, structuredContent: result.structuredContent, isError: result.isError, _meta: result._meta } };
+  if (result.isError) log("tool returned an error:", result.structuredContent);
+  const res = await rpc("resources/read", { uri });
+  frame.srcdoc = res.contents[0].text;
+  frame.style.height = "120px";
+}
+// Fallback sizing: in a hidden tab (headless screenshots) requestAnimationFrame never fires, so the view's own
+// auto-resize cannot run. Measure the same-origin srcdoc directly.
+setInterval(() => {
+  const h = frame.contentDocument?.documentElement?.scrollHeight;
+  if (h && Math.abs(h - frame.offsetHeight) > 2 && document.hidden) frame.style.height = h + "px";
+}, 300);
+$("run").onclick = () => run().catch((e) => log("error", String(e)));
+$("theme").onchange = () => (document.body.dataset.theme = $("theme").value);
+loadTools().then(() => { document.body.dataset.theme = $("theme").value; if (q.get("tool")) run().catch((e) => log("error", String(e))); });
+</script>
+</body>
+</html>

@@ -1,10 +1,13 @@
 /** Drives the whole marketplace over the real MCP protocol as a buyer agent and two provider agents.
  * Doubles as the integration test and the saved client transcript. Usage: tsx scripts/golden-path.ts [--out file.md] */
 import "../lib/env.js";
+import { demoKey } from "../lib/demo-keys.js";
 import { writeFileSync } from "node:fs";
 
 const URL_ = process.env.MCP_URL ?? "http://localhost:3000/mcp";
-const KEYS = { buyer: "agk_demo_buyer_key", budget: "agk_demo_budget_key", fastscrape: "agk_demo_fastscrape_key", careful: "agk_demo_careful_key" };
+const KEYS = { buyer: demoKey("demo-buyer"), budget: demoKey("budget-extractor"), fastscrape: demoKey("fastscrape-pro"), careful: demoKey("careful-extractor") };
+/** Seconds a charge stays disputable. 6 is right for localhost; use CHECK_WINDOW_S=45 against a remote server, where 16 calls take longer than 6 s. */
+const WINDOW = Number(process.env.CHECK_WINDOW_S ?? 6);
 const log: string[] = [];
 let id = 1;
 
@@ -47,8 +50,8 @@ async function main() {
 
   console.log("\n== agreement #1 with the cheap provider (counter-offer, micro dispute)");
   const task = await call("buyer", "create_task", { title: "Extract 40 profiles", description: "Structured fields from synthetic profile pages 2000-2039" });
-  await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 700, check_window_s: 6, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 }, true); // over the human-set per-agreement limit
-  const p1 = await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 100, check_window_s: 6, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 });
+  await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 700, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 }, true); // over the human-set per-agreement limit
+  const p1 = await call("buyer", "propose_agreement", { task_id: task.task_id, listing_id: cheap.listing_id, budget_cap_cents: 100, check_window_s: WINDOW, sample_rate: 0.3, min_field_accuracy: 0.9, holdback_pct: 20 });
   const reqs = await call("budget", "list_requests");
   check(reqs.requests.some((r: R) => r.agreement_id === p1.agreement_id), "provider sees the proposal");
   await call("budget", "review_proposal", { agreement_id: p1.agreement_id, decision: "counter", counter: { price_cents_per_call: 5 }, note: "price floor is 5c" });
@@ -78,7 +81,7 @@ async function main() {
   const good = pending.find((c: R) => c.charge_id !== target!.charge_id)!;
   const frivolous = await call("buyer", "file_dispute", { scope: "micro", charge_id: good.charge_id, claim_type: "wrong_output", note: "just checking" });
   console.log(`  frivolous micro dispute on a correct call: ${frivolous.outcome}`);
-  await sleep(7000);
+  await sleep((WINDOW + 1) * 1000);
   const spend1 = await call("buyer", "get_spend", { agreement_id: p1.agreement_id });
   check(spend1.pending_cents === 0, "check window closed: nothing left pending");
   const closed = await call("buyer", "close_task", { agreement_id: p1.agreement_id });

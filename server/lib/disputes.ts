@@ -21,9 +21,9 @@ export async function resolveMicro(disputeId: string) {
   const d = await must(db.from("disputes").select("*").eq("id", disputeId).maybeSingle(), "dispute");
   const charge = await must(db.from("charges").select("*, call:calls(*), agreement:agreements(*)").eq("id", d.charge_id).maybeSingle(), "charge");
   const call = charge.call as CallRow;
-  const terms = (charge.agreement as { terms: { evals?: EvalSpec[] } }).terms;
+  const terms = (charge.agreement as { terms: { evals?: EvalSpec[]; capability?: string } }).terms;
   // Re-run every eval on this trace, including ground-truth checks that were only sampled live.
-  const outcomes = runEvals(terms.evals ?? [], traceOf(call), true);
+  const outcomes = runEvals(terms.evals ?? [], traceOf(call), true, terms.capability);
   const bad = failed(outcomes);
   const upheld = bad.length > 0;
   const verdict = {
@@ -37,7 +37,7 @@ export async function resolveMicro(disputeId: string) {
   const res = await rpc<Record<string, unknown>>("resolve_micro_dispute", {
     p_dispute: disputeId, p_outcome: upheld ? "upheld" : "rejected", p_refund_pct: upheld ? 100 : 0, p_verdict: verdict,
   });
-  return { dispute_id: disputeId, outcome: upheld ? "upheld" : "rejected", reasoning: verdict.reasoning, settlement: res };
+  return { dispute_id: disputeId, outcome: upheld ? "upheld" : "rejected", reasoning: verdict.reasoning, settlement: res, evidence: verdict.evidence, rules_applied: verdict.rules_applied };
 }
 
 // ───────── full dispute: whole agreement, evidence package, reasoned split verdict ─────────
@@ -61,12 +61,12 @@ export async function respondToDispute(providerId: string, disputeId: string, re
 export async function resolveFull(disputeId: string) {
   const d = await must(db.from("disputes").select("*, agreement:agreements(*)").eq("id", disputeId).maybeSingle(), "dispute");
   if (d.status === "resolved") return { dispute_id: disputeId, ...(d.verdict as object) };
-  const ag = d.agreement as { id: string; terms: { evals?: EvalSpec[]; acceptance?: { min_pass_rate?: number } } };
+  const ag = d.agreement as { id: string; terms: { evals?: EvalSpec[]; capability?: string; acceptance?: { min_pass_rate?: number } } };
   const { data: calls } = await db.from("calls").select("id,seq,request,response,status_code,latency_ms,hash").eq("agreement_id", ag.id).order("seq").limit(500);
   const rows = (calls ?? []) as CallRow[];
   const specs = ag.terms.evals ?? [];
 
-  const perCall = rows.map((c) => ({ c, bad: failed(runEvals(specs, traceOf(c), true)) }));
+  const perCall = rows.map((c) => ({ c, bad: failed(runEvals(specs, traceOf(c), true, ag.terms.capability)) }));
   const passes = perCall.filter((x) => x.bad.length === 0).length;
   const total = perCall.length;
   const passRate = total ? passes / total : 0;

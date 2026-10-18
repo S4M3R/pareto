@@ -1,9 +1,10 @@
-import type { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { BASE_URL } from "../lib/env.js";
 import { MarketError } from "../lib/errors.js";
-import { type Row, agreementFor, checkPolicy, createGrant, db, event, must, roleIn, rpc } from "./common.js";
-import { defineTool } from "./define.js";
+import { usd } from "../lib/format.js";
+import { FundEscrowOut, GetAgreementOut, ListRequestsOut, ProposeAgreementOut, ReviewProposalOut } from "../lib/schemas.js";
+import { type Row, agreementFor, checkPolicy, createGrant, db, event, handlesOf, must, roleIn, rpc, topupCard } from "./common.js";
+import { type AnyServer, defineTool } from "./define.js";
 
 const NEXT_BY_STATUS: Record<string, { buyer: string; provider: string }> = {
   proposed: { buyer: "Wait for the provider to review_proposal.", provider: "review_proposal: approve, counter, or reject." },
@@ -15,7 +16,7 @@ const NEXT_BY_STATUS: Record<string, { buyer: string; provider: string }> = {
   rejected: { buyer: "propose_agreement with different terms or another provider.", provider: "Nothing further." },
 };
 
-export function registerDeal(server: MCPServer) {
+export function registerDeal(server: AnyServer) {
   defineTool(server, {
     name: "create_task",
     description: "Describe the work you need done. Creating a task costs nothing; money only moves when you fund an agreement.",
@@ -34,7 +35,7 @@ export function registerDeal(server: MCPServer) {
       budget_cap_cents: z.number().int().positive().describe("Hard cap. Escrow is funded to exactly this amount."),
       price_cents_per_call: z.number().int().positive().optional().describe("Defaults to the listing price"),
       max_latency_ms: z.number().int().positive().optional().describe("SLA per call; defaults to the listing's SLA"),
-      min_field_accuracy: z.number().min(0).max(1).default(0.8).describe("Per-call accuracy a sampled call must reach"),
+      min_field_accuracy: z.number().min(0).max(1).default(0.8).describe("Accuracy a sampled call must reach: share of fields right for extraction, 1 for a correct label in classification"),
       sample_rate: z.number().min(0).max(1).default(0.3).describe("Share of live calls checked against ground truth (all are re-checked in a dispute)"),
       holdback_pct: z.number().int().min(0).max(50).default(20).describe("Percent of each payment held until close"),
       check_window_s: z.number().int().min(1).max(3600).default(30).describe("Seconds a charge stays disputable before release"),
@@ -51,6 +52,7 @@ export function registerDeal(server: MCPServer) {
     const price = a.price_cents_per_call ?? Number(l.pricing.amount_cents);
     const maxLatency = a.max_latency_ms ?? Number(l.sla?.p95_ms ?? 3000);
     const terms = {
+      capability: l.capability,
       price: { model: "per_call", amount_cents: price },
       budget_cap_cents: a.budget_cap_cents,
       sla: { max_latency_ms: maxLatency },
@@ -63,7 +65,7 @@ export function registerDeal(server: MCPServer) {
     };
     const ag = await must<Row>(db.from("agreements").insert({ task_id: a.task_id, listing_id: a.listing_id, buyer_id: agent!.id, provider_id: l.provider_id, status: "proposed", terms }).select("id").single(), "agreement");
     await event(ag.id, agent!.id, "proposed", { terms });
-    return { data: { agreement_id: ag.id, status: "proposed", terms }, next: "The provider must review_proposal. Poll get_agreement." };
+    return { data: { agreement_id: ag.id, status: "proposed", terms, listing_title: l.title, buyer: agent!.handle, provider: (await handlesOf([l.provider_id]))[l.provider_id] }, next: "The provider must review_proposal. Poll get_agreement." };
   });
 
   defineTool(server, {
@@ -72,6 +74,12 @@ export function registerDeal(server: MCPServer) {
     input: z.object({}),
     role: "provider",
     readOnly: true,
+    show: {
+      name: "show_inbox",
+      description: "Display only: shows the provider an inbox card of proposals waiting for a decision, with Approve and Reject buttons. To read them yourself use list_requests.",
+      view: { name: "proposal-inbox", description: "Proposals waiting for the provider's decision" },
+      output: ListRequestsOut,
+    },
   }, async (_a, agent) => {
     const { data } = await db.from("agreements").select("id,status,terms,buyer_id,version,proposed_at,listing:listings(title)").eq("provider_id", agent!.id).in("status", ["proposed", "countered"]).order("proposed_at");
     const ids = [...new Set((data ?? []).map((r) => r.buyer_id))];
@@ -91,6 +99,7 @@ export function registerDeal(server: MCPServer) {
       }).optional(), note: z.string().optional(),
     }),
     role: "provider",
+    output: ReviewProposalOut,
   }, async (a, agent) => {
     const ag = await agreementFor(agent!, a.agreement_id);
     if (ag.provider_id !== agent!.id) throw new MarketError("unauthorized", "Only the provider can review this.", "Use the provider's key.");
@@ -139,18 +148,30 @@ export function registerDeal(server: MCPServer) {
     description: "Buyer: fund the approved agreement's escrow to its budget cap from your wallet, activate it, and receive your access grant (the grant key is shown once). Funds are held by the platform and released per call only after checks.",
     input: z.object({ agreement_id: z.string().uuid() }),
     role: "buyer",
+    output: FundEscrowOut,
+    view: { name: "agreement-funded", description: "Escrow funded, agreement active, access grant shown once" },
   }, async (a, agent) => {
     const ag = await agreementFor(agent!, a.agreement_id);
     if (ag.buyer_id !== agent!.id) throw new MarketError("unauthorized", "Only the buyer funds escrow.", "Use the buyer's key.");
     await checkPolicy(agent!.id, Number(ag.terms.budget_cap_cents), ag.listing.capability, ag.id);
-    const res = await rpc<Row>("fund_escrow", { p_agreement: ag.id, p_key: `fund:${ag.id}` });
+    let res: Row;
+    try {
+      res = await rpc<Row>("fund_escrow", { p_agreement: ag.id, p_key: `fund:${ag.id}` });
+    } catch (e) {
+      // An empty wallet is the most common stop. Attach the top-up card's data so the view can show it in place of the error.
+      if (e instanceof MarketError && e.code === "insufficient_funds") {
+        e.details = await topupCard(agent!, { needed_cents: Number(ag.terms.budget_cap_cents), reason: `Needed to fund escrow for ${ag.listing?.title ?? "this agreement"}.` });
+      }
+      throw e;
+    }
     const grant = await createGrant(ag.id, Number(ag.terms.budget_cap_cents), ag.terms.deadline);
     return {
       data: {
-        agreement_id: ag.id, status: "active", ...res,
+        agreement_id: ag.id, status: "active", ...res, listing_title: ag.listing?.title, buyer: agent!.handle, provider: (await handlesOf([ag.provider_id]))[ag.provider_id], terms: ag.terms,
         access: { gateway_url: `${BASE_URL}/gw/${ag.id}/call`, header: "x-grant-key", grant_key: grant.key, expires_at: grant.expires_at, note: "Shown once. You can also use the call_provider tool, which needs no grant key." },
       },
       next: "call_provider with {agreement_id, page_id}.",
+      say: `Escrow of ${usd(Number(ag.terms.budget_cap_cents))} is funded and the agreement is active; the card on screen shows the terms and the access grant. Reply with one short sentence.`,
     };
   });
 
@@ -159,11 +180,18 @@ export function registerDeal(server: MCPServer) {
     description: "Status, terms, spend, and history of an agreement you are party to, plus the next action for your role.",
     input: z.object({ agreement_id: z.string().uuid() }),
     readOnly: true,
+    show: {
+      name: "show_agreement",
+      description: "Display only: shows the human an agreement card (status, terms, spend, history). To check it yourself use get_agreement.",
+      view: { name: "agreement-card", description: "Agreement status, terms, spend and history" },
+      output: GetAgreementOut,
+    },
   }, async ({ agreement_id }, agent) => {
     const ag = await agreementFor(agent!, agreement_id);
     const role = roleIn(agent!, ag);
+    const handles = await handlesOf([ag.buyer_id, ag.provider_id]);
     const spend = ag.status === "active" || ag.status === "disputed" || ag.status === "settled" ? await rpc<Row>("agreement_spend", { p_agreement: ag.id }) : null;
     const { data: events } = await db.from("agreement_events").select("kind,created_at,payload").eq("agreement_id", ag.id).order("created_at", { ascending: false }).limit(8);
-    return { data: { agreement_id: ag.id, role, status: ag.status, terms: ag.terms, version: ag.version, spend, recent_events: events ?? [] }, next: NEXT_BY_STATUS[ag.status]?.[role] };
+    return { data: { agreement_id: ag.id, role, status: ag.status, terms: ag.terms, version: ag.version, spend, recent_events: events ?? [], listing_title: ag.listing?.title, buyer: handles[ag.buyer_id], provider: handles[ag.provider_id] }, next: NEXT_BY_STATUS[ag.status]?.[role] };
   });
 }

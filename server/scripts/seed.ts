@@ -4,16 +4,17 @@ import "../lib/env.js";
 import { createHash } from "node:crypto";
 import { BASE_URL } from "../lib/env.js";
 import { sha256 } from "../lib/auth.js";
+import { demoKey } from "../lib/demo-keys.js";
 import { db } from "../lib/db.js";
 import { FIELDS, html, scoreFields, truth } from "../lib/fixtures.js";
 import { PROVIDERS, extract } from "../lib/providers.js";
 import { meanCI, percentile } from "../lib/stats.js";
 
 export const DEMO_KEYS = {
-  "demo-buyer": "agk_demo_buyer_key",
-  "careful-extractor": "agk_demo_careful_key",
-  "budget-extractor": "agk_demo_budget_key",
-  "fastscrape-pro": "agk_demo_fastscrape_key",
+  "demo-buyer": demoKey("demo-buyer"),
+  "careful-extractor": demoKey("careful-extractor"),
+  "budget-extractor": demoKey("budget-extractor"),
+  "fastscrape-pro": demoKey("fastscrape-pro"),
 };
 
 async function upsertAgent(handle: string, roles: string[], owner: string, desc: string, key?: string, seeded = true) {

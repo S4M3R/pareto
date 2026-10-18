@@ -7,3 +7,6 @@ data/
 runs/
 node_modules/
 .next/
+
+# Local-only notes, not published
+yc/

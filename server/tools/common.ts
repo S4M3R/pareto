@@ -1,4 +1,6 @@
 import { type Agent, newKey, sha256 } from "../lib/auth.js";
+import { createTopupApproval } from "../lib/approvals.js";
+import { BASE_URL } from "../lib/env.js";
 import { db, must, rpc } from "../lib/db.js";
 import { MarketError } from "../lib/errors.js";
 
@@ -11,6 +13,35 @@ export async function agreementFor(agent: Agent, id: string): Promise<Row> {
     throw new MarketError("unauthorized", "You are not a party to this agreement.", "Use an account that is the buyer or provider.");
   }
   return ag;
+}
+
+/** Wallet balance in cents (0 when the agent has no wallet account yet). */
+export async function walletCents(agentId: string): Promise<number> {
+  const { data } = await db.from("ledger_accounts").select("id").eq("agent_id", agentId).eq("kind", "wallet").maybeSingle();
+  return data ? await rpc<number>("account_balance", { p_account: data.id }) : 0;
+}
+
+export const TOPUP_PRESETS_CENTS = [500, 1000, 2000, 5000];
+export const MAX_TOPUP_CENTS = 5000;
+
+/** Everything the top-up card needs. Display data only: building it moves no money. */
+export async function topupCard(agent: { id: string; handle: string }, opts: { needed_cents?: number; reason?: string } = {}) {
+  const wallet = await walletCents(agent.id);
+  const shortfall = opts.needed_cents ? Math.max(0, opts.needed_cents - wallet) : 0;
+  const suggested = shortfall > 0 ? (TOPUP_PRESETS_CENTS.find((p) => p >= shortfall) ?? MAX_TOPUP_CENTS) : 1000;
+  return {
+    handle: agent.handle, wallet_cents: wallet, needed_cents: opts.needed_cents ?? null, suggested_cents: suggested,
+    presets_cents: TOPUP_PRESETS_CENTS, max_topup_cents: MAX_TOPUP_CENTS,
+    rail: (process.env.STRIPE_SECRET_KEY ? "stripe-test" : "mock") as "stripe-test" | "mock", reason: opts.reason ?? null,
+    // For clients that cannot draw the card: a link the human opens in a browser to approve.
+    approval_url: `${BASE_URL}/approve/topup/${createTopupApproval({ agentId: agent.id, handle: agent.handle, neededCents: opts.needed_cents ?? null, reason: opts.reason ?? null })}`,
+  };
+}
+
+/** agent id -> handle, for views that show who is on each side of a deal. */
+export async function handlesOf(ids: string[]): Promise<Record<string, string>> {
+  const { data } = await db.from("agents").select("id,handle").in("id", ids);
+  return Object.fromEntries((data ?? []).map((a) => [a.id, a.handle]));
 }
 
 export const roleIn = (agent: Agent, ag: Row) => (ag.buyer_id === agent.id ? "buyer" : "provider");

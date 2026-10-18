@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { agentFromKey, sha256 } from "./auth.js";
+import { BASE_URL } from "./env.js";
 import { db, must, rpc } from "./db.js";
 import { MarketError } from "./errors.js";
+import { capabilityFor } from "./capabilities.js";
 import { type EvalSpec, type Trace, failed, runEvals } from "./evals.js";
 
 /** The per-agreement access point. Every call is authorized, rate limited, forwarded, timed, metered,
@@ -15,9 +17,22 @@ function rateLimit(grantId: string, perMin: number) {
   else if (++b.n > perMin) throw new MarketError("rate_limited", `Rate limit ${perMin}/min reached.`, "Wait for the window to reset or ask the provider for a higher limit in a new agreement.");
 }
 
+/** Platform-operated providers are served by this very server. Their stored URL names the origin they were seeded from,
+ * which is not ours once the server is deployed, so resolve the path against our own origin. Everyone else's endpoint
+ * is called as registered. */
+export function endpointFor(l: { endpoint_url: string; seeded?: boolean }): string {
+  try {
+    const u = new URL(l.endpoint_url);
+    if (l.seeded && u.pathname.startsWith("/providers/")) return BASE_URL + u.pathname;
+  } catch {
+    /* not a URL: let fetch report it */
+  }
+  return l.endpoint_url;
+}
+
 export interface Caller { agentId?: string; grantKey?: string }
 
-export async function callThroughGateway(agreementId: string, input: { page_id: number }, caller: Caller) {
+export async function callThroughGateway(agreementId: string, input: Record<string, unknown>, caller: Caller) {
   // Authorization: either the buyer agent itself (MCP path) or the scoped grant key (HTTP path).
   const ag = await must(db.from("agreements").select("*, listing:listings(*)").eq("id", agreementId).maybeSingle(), "agreement");
   const { data: grant } = await db.from("access_grants").select("*").eq("agreement_id", agreementId).maybeSingle();
@@ -32,10 +47,12 @@ export async function callThroughGateway(agreementId: string, input: { page_id: 
     if (new Date(grant.expires_at) < new Date()) throw new MarketError("grant_expired", "Access grant expired.", "Open a new agreement.");
     rateLimit(grant.id, grant.rate_limit_per_min);
   }
-  if (!Number.isInteger(input?.page_id)) throw new MarketError("bad_input", "page_id (integer) is required.", "Send {\"page_id\": 123}.");
 
-  const terms = ag.terms as { price: { amount_cents: number }; sla?: { p95_ms?: number }; evals?: EvalSpec[]; check_window_s?: number; auto_refund_failed?: boolean };
-  const listing = ag.listing as { endpoint_url: string; endpoint_type: string };
+  const terms = ag.terms as { capability?: string; price: { amount_cents: number }; sla?: { p95_ms?: number }; evals?: EvalSpec[]; check_window_s?: number; auto_refund_failed?: boolean };
+  const capabilityId = terms.capability ?? (ag.listing as { capability?: string }).capability;
+  const cap = capabilityFor(capabilityId);
+  const { request, body } = cap.prepare(input ?? {});
+  const listing = ag.listing as { endpoint_url: string; endpoint_type: string; seeded?: boolean };
   if (listing.endpoint_type !== "http") throw new MarketError("unsupported", "Only HTTP providers are supported by this gateway version.", "Pick a provider with an HTTP endpoint.");
 
   // Forward to the provider, measuring latency ourselves.
@@ -43,10 +60,10 @@ export async function callThroughGateway(agreementId: string, input: { page_id: 
   let status = 502;
   let response: Trace["response"] = null;
   try {
-    const r = await fetch(listing.endpoint_url, {
+    const r = await fetch(endpointFor(listing), {
       method: "POST",
       headers: { "content-type": "application/json", "x-agreement-id": agreementId },
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
     status = r.status;
@@ -57,14 +74,14 @@ export async function callThroughGateway(agreementId: string, input: { page_id: 
   const latency_ms = Date.now() - t0;
 
   const unitsMeasured = 1; // one page per call; measured by the platform, independent of what the provider claims
-  const trace: Trace = { request: input, response, status, latency_ms, units_measured: unitsMeasured };
-  const outcomes = runEvals(terms.evals ?? [], trace);
+  const trace: Trace = { request, response, status, latency_ms, units_measured: unitsMeasured };
+  const outcomes = runEvals(terms.evals ?? [], trace, false, capabilityId);
   const bad = failed(outcomes);
   const charge = status === 200 ? terms.price.amount_cents * unitsMeasured : 0;
 
   const rec = await rpc<{ call_id: string; charge_id: string; seq: number; hash: string; spent_cents: number; cap_cents: number }>("append_call", {
     p_agreement: agreementId,
-    p_request: input,
+    p_request: request,
     p_response: response ?? { error: "provider_unreachable_or_invalid" },
     p_status: status,
     p_latency: latency_ms,
@@ -86,7 +103,7 @@ export async function callThroughGateway(agreementId: string, input: { page_id: 
 
   return {
     call_id: rec.call_id, charge_id: rec.charge_id, seq: rec.seq, hash: rec.hash.slice(0, 16),
-    result: response?.fields ?? null,
+    result: cap.fieldsOf(response) ?? null,
     status: callStatus,
     charged_cents: callStatus === "auto_refunded" ? 0 : charge,
     checks: outcomes.filter((o) => o.ran).map((o) => ({ type: o.type, passed: o.passed, detail: o.detail })),

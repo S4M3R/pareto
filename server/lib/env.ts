@@ -12,4 +12,4 @@ for (const p of ["../.env", ".env"]) {
   }
 }
 
-export const BASE_URL = process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+export const BASE_URL = process.env.PUBLIC_BASE_URL ?? process.env.MCP_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;

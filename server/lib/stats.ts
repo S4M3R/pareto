@@ -14,3 +14,12 @@ export function percentile(xs: number[], q: number): number {
 }
 
 export const round = (x: number, d = 3) => Math.round(x * 10 ** d) / 10 ** d;
+
+/** Wilson 95% interval for a proportion: behaves at 0, 1 and small n, unlike the normal approximation. */
+export function wilson(k: number, n: number): { p: number; low: number; high: number } {
+  if (n === 0) return { p: 0, low: 0, high: 1 };
+  const z = 1.96, p = k / n, d = 1 + (z * z) / n;
+  const c = (p + (z * z) / (2 * n)) / d;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+  return { p, low: Math.max(0, c - half), high: Math.min(1, c + half) };
+}

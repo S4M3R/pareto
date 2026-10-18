@@ -1,20 +1,27 @@
-import type { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { callThroughGateway } from "../lib/gateway.js";
 import { MarketError } from "../lib/errors.js";
 import { sweep } from "../lib/disputes.js";
 import { BASE_URL } from "../lib/env.js";
+import { CallProviderOut, GetSpendOut, ListCallsOut } from "../lib/schemas.js";
 import { type Row, agreementFor, db, must, rpc } from "./common.js";
-import { defineTool } from "./define.js";
+import { type AnyServer, defineTool } from "./define.js";
 
-export function registerUse(server: MCPServer) {
+export function registerUse(server: AnyServer) {
   defineTool(server, {
     name: "call_provider",
-    description: "Buyer: use the provider through the platform gateway. Each call is metered, traced, checked against the agreement's evals, and creates a pending charge you can still dispute during the check window. Failed checks are refunded automatically.",
-    input: z.object({ agreement_id: z.string().uuid(), page_id: z.number().int().describe("Which profile page to extract (the demo capability)") }),
+    description: "Buyer: use the provider through the platform gateway. Each call is metered, traced, checked against the agreement's evals, and creates a pending charge you can still dispute during the check window. Failed checks are refunded automatically. Input depends on the capability: profile-extraction takes page_id; image-classification takes exactly one of image_id (a live-pool image from list_sample_images), image_url (public https) or image_base64 (your own, under 1 MB).",
+    input: z.object({
+      agreement_id: z.string().uuid(),
+      page_id: z.number().int().optional().describe("profile-extraction: which profile page to extract"),
+      image_id: z.string().optional().describe("image-classification: a live-pool image id from list_sample_images"),
+      image_url: z.string().url().optional().describe("image-classification: a public https image URL"),
+      image_base64: z.string().optional().describe("image-classification: your own image, base64, under 1 MB"),
+    }),
     role: "buyer",
   }, async (a, agent) => {
-    const r = await callThroughGateway(a.agreement_id, { page_id: a.page_id }, { agentId: agent!.id });
+    const { agreement_id, ...input } = a;
+    const r = await callThroughGateway(agreement_id, input, { agentId: agent!.id });
     const failed = r.checks.filter((c) => !c.passed);
     return { data: r, next: failed.length ? "Auto-refunded because a check failed. Keep going, or file_dispute if you see other problems." : "list_calls to review traces, get_spend for the meter, file_dispute if a result looks wrong." };
   });
@@ -36,6 +43,12 @@ export function registerUse(server: MCPServer) {
     description: "Live spend meter for an agreement: charged, pending, released, held back, refunded, escrow balance, and remaining budget.",
     input: z.object({ agreement_id: z.string().uuid() }),
     readOnly: true,
+    show: {
+      name: "show_spend",
+      description: "Display only: shows the human a live spend meter for an agreement. To read the numbers yourself use get_spend.",
+      view: { name: "spend-meter", description: "Live spend meter for an agreement" },
+      output: GetSpendOut,
+    },
   }, async ({ agreement_id }, agent) => {
     await agreementFor(agent!, agreement_id);
     await sweep();
